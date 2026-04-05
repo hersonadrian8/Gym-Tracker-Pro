@@ -235,7 +235,11 @@ export default function GymTracker({ user, signOut }){
   const lastWorkout=getLastWorkout();
   const getCalDays=()=>{const y=calMonth.getFullYear(),m=calMonth.getMonth();const ld=new Date(y,m+1,0);let sd=new Date(y,m,1).getDay();sd=sd===0?6:sd-1;const days=[];for(let i=0;i<sd;i++)days.push(null);for(let d=1;d<=ld.getDate();d++){const dt=new Date(y,m,d);const iso=dt.toISOString().split("T")[0];days.push({day:d,iso,entries:history.filter(h=>h.isoDate===iso)});}return days;};
 
+  const SPLIT_COLORS=["#818cf8","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f472b6","#84cc16"];
+  const getSplitColor=(splitName)=>{if(!primaryProg)return SPLIT_COLORS[0];const idx=primaryProg.splits.findIndex(s=>s.name===splitName);return idx>=0?SPLIT_COLORS[idx%SPLIT_COLORS.length]:SPLIT_COLORS[0];};
   const card={background:t.surface,borderRadius:10,border:`1px solid ${t.border}`};
+  const cardWithLeft=(color)=>({background:t.surface,borderRadius:10,borderTop:`1px solid ${t.border}`,borderRight:`1px solid ${t.border}`,borderBottom:`1px solid ${t.border}`,borderLeft:`3px solid ${color}`});
+  const cardWithTop=(color)=>({background:t.surface,borderRadius:10,borderLeft:`1px solid ${t.border}`,borderRight:`1px solid ${t.border}`,borderBottom:`1px solid ${t.border}`,borderTop:`3px solid ${color}`});
   const pill=(a,col)=>({padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",border:a?`2px solid ${col}`:"2px solid transparent",background:a?`${col}20`:t.bg,color:a?col:t.textMuted});
   const rProg=rTotal>0?Math.max(0,1-rSecs/rTotal):0;
   const isOvertime=rSecs<0;
@@ -296,7 +300,7 @@ export default function GymTracker({ user, signOut }){
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {programs.map((p,pi)=>{const isPri=primaryProgIdx===pi;const isSel=selProgIdx===pi&&!editing;return(
-                  <button key={p.id} onClick={()=>{if(!editing){setSelProgIdx(pi);setSelSplitIdx(null);}}} style={{...card,padding:"12px 14px",cursor:editing?"default":"pointer",textAlign:"left",borderLeft:isSel?`3px solid ${getProgColor(p.name)}`:"3px solid transparent",opacity:editing?0.8:1,position:"relative"}}>
+                  <button key={p.id} onClick={()=>{if(!editing){setSelProgIdx(pi);setSelSplitIdx(null);}}} style={{...(isSel?cardWithLeft(getProgColor(p.name)):card),padding:"12px 14px",cursor:editing?"default":"pointer",textAlign:"left",opacity:editing?0.8:1,position:"relative"}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                       <div style={{fontSize:14,fontWeight:700,color:isSel?t.text:t.textSec}}>{p.name}</div>
                       {isPri&&!editing&&<div style={{fontSize:8,fontWeight:700,color:getProgColor(p.name),background:`${getProgColor(p.name)}20`,padding:"2px 8px",borderRadius:10,textTransform:"uppercase",letterSpacing:0.5}}>Primary</div>}
@@ -316,7 +320,7 @@ export default function GymTracker({ user, signOut }){
             {!editing&&prog&&<div style={{marginBottom:14}}>
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Choose Split</div>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{prog.splits.map((s,si)=>(
-                <button key={si} onClick={()=>setSelSplitIdx(selSplitIdx===si?null:si)} style={{...card,padding:"10px 14px",cursor:"pointer",textAlign:"left",flex:"1 1 calc(50% - 3px)",minWidth:90,borderLeft:selSplitIdx===si?`3px solid ${t.green}`:"3px solid transparent",background:selSplitIdx===si?t.greenBg:t.surface}}>
+                <button key={si} onClick={()=>setSelSplitIdx(selSplitIdx===si?null:si)} style={{...(selSplitIdx===si?cardWithLeft(t.green):{...card}),padding:"10px 14px",cursor:"pointer",textAlign:"left",flex:"1 1 calc(50% - 3px)",minWidth:90,background:selSplitIdx===si?t.greenBg:t.surface}}>
                   <div style={{fontSize:13,fontWeight:700,color:selSplitIdx===si?t.green:t.textSec}}>{s.name}</div>
                   <div style={{fontSize:9,color:t.textFaint,marginTop:1}}>{s.exercises.length} exercises</div>
                 </button>
@@ -347,7 +351,7 @@ export default function GymTracker({ user, signOut }){
 
             {/* 2. NEXT UP */}
             {!editing&&nextSplit&&primaryProg&&<div style={{marginBottom:14}}>
-              <div style={{...card,padding:"12px 14px",borderLeft:`3px solid ${getProgColor(primaryProg.name)}`,background:`linear-gradient(135deg,${t.surface},${getProgColor(primaryProg.name)}08)`}}>
+              <div style={{...cardWithLeft(getProgColor(primaryProg.name)),padding:"12px 14px",background:`linear-gradient(135deg,${t.surface},${getProgColor(primaryProg.name)}08)`}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:3}}>
                   <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Next Up</div>
                   <div style={{fontSize:9,color:t.textFaint}}>{primaryProg.name}</div>
@@ -365,7 +369,7 @@ export default function GymTracker({ user, signOut }){
               <div style={{display:"flex",gap:2}}>{weekDots.map(d=>{const isSel=weekSelDay===d.iso;return(
                 <div key={d.day} style={{flex:1,textAlign:"center",cursor:"pointer",padding:"3px 0"}} onClick={()=>setWeekSelDay(isSel?null:d.iso)}>
                   <div style={{fontSize:9,color:d.isToday?t.text:t.textFaint,fontWeight:d.isToday?700:500,marginBottom:4}}>{d.day}</div>
-                  <div style={{width:24,height:24,borderRadius:"50%",margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"center",background:d.worked?getProgColor(d.program):(d.isToday?t.surfaceAlt:t.surface),border:isSel?`2px solid ${t.text}`:(d.isToday&&!d.worked?`2px solid ${t.textFaint}`:"2px solid transparent"),boxShadow:d.worked?`0 0 6px ${getProgColor(d.program)}40`:"none"}}>{d.worked&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}/>}</div>
+                  <div style={{width:24,height:24,borderRadius:"50%",margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"center",background:d.worked?getSplitColor(d.entries[0]?.split):(d.isToday?t.surfaceAlt:t.surface),border:isSel?`2px solid ${t.text}`:(d.isToday&&!d.worked?`2px solid ${t.textFaint}`:"2px solid transparent"),boxShadow:d.worked?`0 0 6px ${getSplitColor(d.entries[0]?.split)}40`:"none"}}>{d.worked&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}/>}</div>
                 </div>);
               })}</div>
             </div>}
@@ -374,7 +378,7 @@ export default function GymTracker({ user, signOut }){
             {!editing&&weekSelDay&&(()=>{const dd=weekDots.find(d=>d.iso===weekSelDay);if(!dd)return null;const dn=new Date(weekSelDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
               if(!dd.worked) return <div style={{...card,padding:"10px 12px",marginBottom:14,textAlign:"center"}}><div style={{fontSize:11,color:t.textFaint}}>{dn} — Rest day</div></div>;
               const bs={};dd.entries.forEach(h=>{const k=h.split||"W";if(!bs[k])bs[k]=[];bs[k].push(h);});
-              return <div style={{...card,padding:"10px 14px",marginBottom:14,borderTop:`3px solid ${getProgColor(dd.program)}`}}>
+              return <div style={{...cardWithTop(getSplitColor(dd.entries[0]?.split)),padding:"10px 14px",marginBottom:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div style={{fontSize:12,fontWeight:700,color:t.text}}>{dn}</div><div style={{fontSize:8,color:getProgColor(dd.program),fontWeight:600,background:`${getProgColor(dd.program)}15`,padding:"2px 6px",borderRadius:6}}>{dd.program}</div></div>
                 {Object.entries(bs).map(([sn,entries])=><div key={sn}><div style={{fontSize:9,fontWeight:700,color:t.green,marginBottom:2,textTransform:"uppercase"}}>{sn}</div>{entries.map((h,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><div style={{color:t.textSec}}>{h.exercise}{renderSetBadges(h.setDetails)}</div><div style={{display:"flex",gap:8}}><span style={{color:t.orange,fontWeight:600}}>{h.weight}lbs</span><span style={{color:t.textMuted}}>{h.sets}×{h.reps}</span></div></div>)}</div>)}
               </div>;
@@ -414,7 +418,7 @@ export default function GymTracker({ user, signOut }){
           </div>
           {exercises.map((ex,exIdx)=>{const mc=MC[ex.muscle]||t.textSec;const count=getSC(ex.name);const lastTime=getLastSession(ex.name);const restTime=getExRest(ex.name);return(
             <div key={`${ex.name}-${exIdx}`}>
-              <div style={{...card,marginBottom:0,overflow:"hidden",borderLeft:`3px solid ${mc}`}}>
+              <div style={{...cardWithLeft(mc),marginBottom:0,overflow:"hidden"}}>
                 <div style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:3}}>
                     <div><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:13,fontWeight:600,color:t.text}}>{ex.name}</span><button onClick={()=>{setSwappingExIdx(swappingExIdx===exIdx?null:exIdx);setSwapSearch("");}} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center"}} title="Swap exercise"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={t.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg></button></div><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:9,fontWeight:700,color:mc,textTransform:"uppercase"}}>{ex.muscle}</span><span style={{fontSize:8,color:t.textFaint}}>Rest: {fc(restTime)}</span></div></div>
@@ -486,15 +490,15 @@ export default function GymTracker({ user, signOut }){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:3}}>{DOW.map(d=><div key={d} style={{textAlign:"center",fontSize:9,fontWeight:600,color:t.textFaint,padding:"2px 0"}}>{d}</div>)}</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:12}}>
-            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const isSel=calSelDay===d.iso;const isT=d.iso===new Date().toISOString().split("T")[0];const dc=hw?getProgColor(d.entries[0].program):"transparent";
+            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const isSel=calSelDay===d.iso;const isT=d.iso===new Date().toISOString().split("T")[0];const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):"transparent";
               return <button key={d.iso} onClick={()=>setCalSelDay(isSel?null:d.iso)} style={{aspectRatio:"1",borderRadius:8,border:"none",cursor:hw?"pointer":"default",background:isSel?`${dc}25`:(isT?t.surfaceAlt:t.surface),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,outline:isSel?`2px solid ${dc}`:"none",padding:0}}>
                 <div style={{fontSize:11,fontWeight:isT?800:500,color:isT?t.text:(hw?t.textDim:t.textFaint)}}>{d.day}</div>
-                {hw&&<div style={{display:"flex",gap:2}}>{[...new Set(d.entries.map(e=>e.split))].slice(0,2).map((s,j)=><div key={j} style={{width:4,height:4,borderRadius:"50%",background:dc}}/>)}</div>}
+                {hw&&<div style={{display:"flex",gap:2}}>{splits.slice(0,2).map((s,j)=><div key={j} style={{width:4,height:4,borderRadius:"50%",background:getSplitColor(s)}}/>)}</div>}
               </button>;
             })}
           </div>
           {calSelDay&&(()=>{const de=history.filter(h=>h.isoDate===calSelDay);if(!de.length)return null;const bs={};de.forEach(h=>{const k=h.split||"W";if(!bs[k])bs[k]=[];bs[k].push(h);});const dd=new Date(calSelDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});const isEditing=editingHistory&&editingHistory.length>0&&editingHistory[0].isoDate===calSelDay;
-            return <div style={{...card,padding:"12px 14px",marginBottom:12,borderTop:`3px solid ${getProgColor(de[0].program)}`}}>
+            return <div style={{...cardWithTop(getSplitColor(de[0]?.split)),padding:"12px 14px",marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div><div style={{fontSize:13,fontWeight:700,color:t.text}}>{dd}</div><div style={{fontSize:10,color:getProgColor(de[0].program),fontWeight:600}}>{de[0].program}</div></div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -522,7 +526,7 @@ export default function GymTracker({ user, signOut }){
               Object.entries(bs).map(([sn,entries])=><div key={sn} style={{marginBottom:8}}><div style={{fontSize:10,fontWeight:700,color:t.green,marginBottom:3,textTransform:"uppercase"}}>{sn}</div>{entries.map((h,i)=><div key={i} style={{padding:"4px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:t.textDim}}>{h.exercise}</span><div style={{display:"flex",gap:10,fontSize:11}}><span style={{color:t.orange,fontWeight:700}}>{h.weight}lbs</span><span style={{color:t.textSec}}>{h.sets}×{h.reps}</span></div></div>{renderSetBadges(h.setDetails)}</div>)}</div>)}
             </div>;
           })()}
-          <div style={{display:"flex",gap:8,justifyContent:"center",padding:"4px 0",marginBottom:14}}>{Object.entries(PROGRAM_COLORS).map(([n,c])=><div key={n} style={{display:"flex",alignItems:"center",gap:3,fontSize:9,color:t.textMuted}}><div style={{width:6,height:6,borderRadius:"50%",background:c}}/>{n}</div>)}</div>
+          <div style={{display:"flex",gap:8,justifyContent:"center",padding:"4px 0",marginBottom:14,flexWrap:"wrap"}}>{primaryProg?primaryProg.splits.map((s,i)=><div key={s.name} style={{display:"flex",alignItems:"center",gap:3,fontSize:9,color:t.textMuted}}><div style={{width:6,height:6,borderRadius:"50%",background:SPLIT_COLORS[i%SPLIT_COLORS.length]}}/>{s.name}</div>):<div style={{fontSize:9,color:t.textFaint}}>No primary program set</div>}</div>
 
           {/* Sets per muscle group — last 7 days */}
           {(()=>{const now=new Date();const sevenAgo=new Date(now);sevenAgo.setDate(now.getDate()-6);sevenAgo.setHours(0,0,0,0);const sevenIso=sevenAgo.toISOString().split("T")[0];
@@ -594,7 +598,7 @@ export default function GymTracker({ user, signOut }){
 
         {/* ==================== FRIENDS ==================== */}
         {tab==="friends"&&<div>
-          <div style={{display:"flex",gap:5,marginBottom:14}}>{friends.map((f,i)=><button key={f.name} onClick={()=>setSelFriend(i)} style={{flex:1,...card,padding:"10px",cursor:"pointer",textAlign:"center",borderTop:selFriend===i?`3px solid ${f.color}`:"3px solid transparent",background:selFriend===i?`${f.color}10`:t.surface}}><div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${f.color},${f.color}99)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",margin:"0 auto 4px"}}>{f.name[0]}</div><div style={{fontSize:11,fontWeight:700,color:selFriend===i?f.color:t.textSec}}>{f.name}</div></button>)}
+          <div style={{display:"flex",gap:5,marginBottom:14}}>{friends.map((f,i)=><button key={f.name} onClick={()=>setSelFriend(i)} style={{flex:1,...(selFriend===i?cardWithTop(f.color):card),padding:"10px",cursor:"pointer",textAlign:"center",background:selFriend===i?`${f.color}10`:t.surface}}><div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${f.color},${f.color}99)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",margin:"0 auto 4px"}}>{f.name[0]}</div><div style={{fontSize:11,fontWeight:700,color:selFriend===i?f.color:t.textSec}}>{f.name}</div></button>)}
             <button onClick={()=>setShowAddFriend(true)} style={{flex:1,...card,padding:"10px",cursor:"pointer",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}><div style={{width:30,height:30,borderRadius:"50%",border:`2px dashed ${t.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:t.textFaint}}>+</div><div style={{fontSize:9,fontWeight:600,color:t.textFaint}}>Add</div></button>
           </div>
           {!friendInfoDismissed&&<div style={{...card,padding:10,marginBottom:12,background:`linear-gradient(135deg,${t.surface},${t.surfaceAlt})`,position:"relative"}}><button onClick={()=>setFriendInfoDismissed(true)} style={{position:"absolute",top:6,right:8,background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>×</button><div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:2}}>HOW FRIEND CODES WORK</div><div style={{fontSize:10,color:t.textSec,lineHeight:1.5,paddingRight:16}}>Share your unique code → friends enter it → workouts sync automatically.</div></div>}
@@ -746,7 +750,7 @@ export default function GymTracker({ user, signOut }){
                   {id:"light",l:"Concrete",desc:"Clean whites and soft grays",colors:["#f2f2f7","#ffffff","#c6c6c8","#5856d6"]},
                   {id:"auto",l:"Auto",desc:"Match your device settings",colors:null},
                 ].map(th=>(
-                  <button key={th.id} onClick={()=>setAppearance(th.id)} style={{...card,padding:"12px 14px",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:12,borderLeft:appearance===th.id?`3px solid ${t.accent}`:"3px solid transparent",background:appearance===th.id?t.accentBg:t.surface}}>
+                  <button key={th.id} onClick={()=>setAppearance(th.id)} style={{...(appearance===th.id?cardWithLeft(t.accent):card),padding:"12px 14px",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:12,background:appearance===th.id?t.accentBg:t.surface}}>
                     {th.colors?<div style={{display:"flex",gap:2,flexShrink:0}}>{th.colors.map((c,i)=><div key={i} style={{width:14,height:14,borderRadius:4,background:c,border:`1px solid ${t.borderLight}`}}/>)}</div>:<span style={{fontSize:18}}>&#128260;</span>}
                     <div style={{flex:1}}>
                       <div style={{fontSize:13,fontWeight:600,color:appearance===th.id?t.text:t.textSec}}>{th.l}</div>
