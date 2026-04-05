@@ -176,7 +176,7 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{localStorage.setItem("gt_friend_info_dismissed",String(friendInfoDismissed));},[friendInfoDismissed]);
   const fullExDB={...EXERCISE_DB,...customExercises};
   const getExRest=(name)=>customRestTimes[name]??exercises.find(e=>e.name===name)?.rest??fullExDB[name]?.rest??90;
-  const EXERCISE_LIST=Object.entries(fullExDB).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest}));
+  const EXERCISE_LIST=Object.entries(fullExDB).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest})).sort((a,b)=>{const mi=MUSCLE_GROUPS.indexOf(a.muscle),mj=MUSCLE_GROUPS.indexOf(b.muscle);if(mi!==mj)return(mi===-1?99:mi)-(mj===-1?99:mj);return a.name.localeCompare(b.name);});
 
   const prog=programs[selProgIdx];const split=selSplitIdx!==null?prog?.splits[selSplitIdx]:null;const exercises=split?.exercises||[];const allLoggedEx=[...new Set(history.map(h=>h.exercise))].sort();
   const allDbExNames=Object.keys(fullExDB);
