@@ -127,6 +127,9 @@ export default function GymTracker({ user, signOut }){
   const [addFriendError,setAddFriendError]=useState("");
   const [addFriendSuccess,setAddFriendSuccess]=useState(false);
   const [friendsLoading,setFriendsLoading]=useState(false);
+  const [importPreview,setImportPreview]=useState(null);
+  const [importSelected,setImportSelected]=useState(new Set());
+  const [importError,setImportError]=useState("");
   const importRef=useRef(null);
 
   // Theme
@@ -222,7 +225,9 @@ export default function GymTracker({ user, signOut }){
 
   // Import/Export
   const exportPrograms=()=>{const data=JSON.stringify(programs,null,2);const blob=new Blob([data],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="gym-tracker-programs.json";a.click();URL.revokeObjectURL(url);};
-  const importPrograms=(e)=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=(ev)=>{try{const imp=JSON.parse(ev.target.result);if(Array.isArray(imp)&&imp.length>0){setPrograms(prev=>[...prev,...imp.map(p=>({...p,id:`p${Date.now()}_${Math.random().toString(36).slice(2,6)}`}))]);}}catch(err){/* invalid */}};reader.readAsText(file);e.target.value="";};
+  const handleImportFile=(e)=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=(ev)=>{try{const imp=JSON.parse(ev.target.result);if(Array.isArray(imp)&&imp.length>0){setImportPreview(imp);setImportSelected(new Set(imp.map((_,i)=>i)));setImportError("");}else{setImportError("No valid programs found in file.");}}catch(err){setImportError("Invalid file format.");}};reader.readAsText(file);e.target.value="";};
+  const confirmImport=()=>{if(!importPreview)return;const selected=importPreview.filter((_,i)=>importSelected.has(i));if(!selected.length)return;setPrograms(prev=>[...prev,...selected.map(p=>({...p,id:`p${Date.now()}_${Math.random().toString(36).slice(2,6)}`}))]);setImportPreview(null);setImportSelected(new Set());};
+  const toggleImportItem=(idx)=>{setImportSelected(prev=>{const next=new Set(prev);if(next.has(idx))next.delete(idx);else next.add(idx);return next;});};
 
   const primaryProg=programs[primaryProgIdx];
   const getNextSplit=()=>{if(!primaryProg||!primaryProg.splits.length)return null;const ph=history.filter(h=>h.program===primaryProg.name);if(!ph.length)return{splitIdx:0,splitName:primaryProg.splits[0].name};const maxDate=ph.reduce((m,h)=>(h.isoDate||"0")>m?(h.isoDate||"0"):m,"0");const lastDayEntries=ph.filter(h=>h.isoDate===maxDate);const lastSplit=lastDayEntries[lastDayEntries.length-1].split;const li=primaryProg.splits.findIndex(s=>s.name===lastSplit);return{splitIdx:(li+1)%primaryProg.splits.length,splitName:primaryProg.splits[(li+1)%primaryProg.splits.length].name};};
@@ -441,10 +446,10 @@ export default function GymTracker({ user, signOut }){
                         <div style={{display:"flex",gap:4,alignItems:"center"}}>
                           <div style={{width:20,height:20,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,flexShrink:0,background:confirmed?t.greenBg:t.surfaceAlt,color:confirmed?t.green:t.textMuted}}>{si+1}</div>
                           <div style={{display:"flex",gap:2,flexShrink:0}}>{["S","D","M"].map(st=><button key={st} onClick={()=>setTypeVal(ex.name,si,st)} style={{width:20,height:20,borderRadius:4,fontSize:8,fontWeight:800,cursor:"pointer",border:tp===st?`1px solid ${STL[st].color}`:`1px solid ${t.border}`,background:tp===st?`${STL[st].color}25`:"transparent",color:tp===st?STL[st].color:t.textFaint,display:"flex",alignItems:"center",justifyContent:"center"}}>{st}</button>)}</div>
-                          {tp==="D"?<div style={{flex:1,display:"flex",gap:2,minWidth:0}}>{[0,1,2].map(d=>{const ds=getS(ex.name,si,d);return <div key={d} style={{flex:1,display:"flex",gap:1,minWidth:0}}><input value={ds.weight} onChange={e=>upS(ex.name,si,"weight",e.target.value.replace(/[^\d.]/g,""),d)} placeholder="lbs" style={{flex:1,padding:"6px 2px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/><input value={ds.reps} onChange={e=>upS(ex.name,si,"reps",e.target.value.replace(/\D/g,""),d)} placeholder="r" style={{flex:"0 0 28px",padding:"6px 1px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/></div>})}</div>:(
+                          {tp==="D"?<div style={{flex:1,display:"flex",gap:2,minWidth:0}}>{[0,1,2].map(d=>{const ds=getS(ex.name,si,d);return <div key={d} style={{flex:1,display:"flex",gap:1,minWidth:0}}><input inputMode="decimal" value={ds.weight} onChange={e=>upS(ex.name,si,"weight",e.target.value.replace(/[^\d.]/g,""),d)} placeholder="lbs" style={{flex:1,padding:"6px 2px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/><input inputMode="numeric" value={ds.reps} onChange={e=>upS(ex.name,si,"reps",e.target.value.replace(/\D/g,""),d)} placeholder="r" style={{flex:"0 0 28px",padding:"6px 1px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/></div>})}</div>:(
                             <div style={{flex:1,display:"flex",gap:5,minWidth:0}}>
-                              <input value={ew} onChange={e=>upS(ex.name,si,"weight",e.target.value.replace(/[^\d.]/g,""))} placeholder="Weight" style={{flex:1,padding:"7px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:si>0&&!manuallyEdited[`${ex.name}__${si}`]&&ew?t.accentBg:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/>
-                              <input value={s.reps} onChange={e=>upS(ex.name,si,"reps",e.target.value.replace(/\D/g,""))} placeholder="Reps" style={{flex:1,padding:"7px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/>
+                              <input inputMode="decimal" value={ew} onChange={e=>upS(ex.name,si,"weight",e.target.value.replace(/[^\d.]/g,""))} placeholder="Weight" style={{flex:1,padding:"7px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:si>0&&!manuallyEdited[`${ex.name}__${si}`]&&ew?t.accentBg:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/>
+                              <input inputMode="numeric" value={s.reps} onChange={e=>upS(ex.name,si,"reps",e.target.value.replace(/\D/g,""))} placeholder="Reps" style={{flex:1,padding:"7px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/>
                             </div>
                           )}
                           {filled&&!confirmed?<button onClick={()=>confirmSet(ex.name,exIdx,si)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${t.green}60`,background:t.greenBg,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:3}} title="Confirm set & start rest"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg><span style={{fontSize:8,fontWeight:700,color:t.green}}>Done</span></button>:confirmed?<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="3" strokeLinecap="round" style={{flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>:<div style={{width:14}}/>}
@@ -453,7 +458,7 @@ export default function GymTracker({ user, signOut }){
                         {tp==="M"&&si===0&&<div style={{fontSize:8,color:t.red,marginLeft:46,marginTop:1}}>Activation set</div>}
                         {tp==="M"&&si>0&&<div style={{fontSize:8,color:t.red,marginLeft:46,marginTop:1}}>Myo rep {si}</div>}
                       </div>
-                      {rActive&&rAfterEx===exIdx&&rAfterSet===si&&<RestTimerInline/>}
+                      {rActive&&rAfterEx===exIdx&&rAfterSet===si&&si<count-1&&<RestTimerInline/>}
                     </div>);
                   })}
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:5}}>
@@ -773,7 +778,7 @@ export default function GymTracker({ user, signOut }){
               <div style={{...card,padding:14,marginTop:10}}>
                 <div style={{fontSize:12,fontWeight:600,color:t.text,marginBottom:4}}>Import Programs</div>
                 <div style={{fontSize:10,color:t.textFaint,marginBottom:10,lineHeight:1.5}}>Load programs from a JSON file. Imported programs will be added alongside existing ones.</div>
-                <input ref={importRef} type="file" accept=".json" onChange={importPrograms} style={{display:"none"}}/>
+                <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} style={{display:"none"}}/>
                 <button onClick={()=>importRef.current?.click()} style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${t.green}40`,background:t.greenBg,color:t.green,fontWeight:600,fontSize:12,cursor:"pointer"}}>Import Programs (.json)</button>
               </div>
               {user&&<div style={{marginTop:20}}>
@@ -784,6 +789,36 @@ export default function GymTracker({ user, signOut }){
                 </div>
               </div>}
             </div>}
+          </div>
+        </div>
+      </div>}
+
+      {/* Import Preview Modal */}
+      {importPreview&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>{setImportPreview(null);setImportSelected(new Set());setImportError("");}}>
+        <div style={{...card,padding:0,width:"100%",maxWidth:400,maxHeight:"80vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
+          <div style={{padding:"16px 16px 12px",borderBottom:`1px solid ${t.border}`}}>
+            <div style={{fontSize:15,fontWeight:700,color:t.text}}>Import Programs</div>
+            <div style={{fontSize:11,color:t.textMuted,marginTop:2}}>{importPreview.length} program{importPreview.length!==1?"s":""} found — select which to import</div>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:12}}>
+            {importPreview.map((prog,i)=><div key={i} onClick={()=>toggleImportItem(i)} style={{...card,padding:12,marginBottom:8,cursor:"pointer",opacity:importSelected.has(i)?1:0.4,transition:"opacity .15s"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:20,height:20,borderRadius:6,border:`2px solid ${importSelected.has(i)?t.accent:t.border}`,background:importSelected.has(i)?t.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
+                  {importSelected.has(i)&&<span style={{color:"#fff",fontSize:12,fontWeight:700}}>✓</span>}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:t.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{prog.name||"Unnamed Program"}</div>
+                  {prog.splits&&prog.splits.length>0&&<div style={{fontSize:10,color:t.textMuted,marginTop:3,display:"flex",flexWrap:"wrap",gap:4}}>
+                    {prog.splits.map((s,si)=><span key={si} style={{background:t.surfaceAlt,padding:"2px 6px",borderRadius:4}}>{s.name||"Split "+(si+1)} · {s.exercises?.length||0} ex</span>)}
+                  </div>}
+                </div>
+              </div>
+            </div>)}
+            {importError&&<div style={{padding:"8px 10px",background:t.redBg,borderRadius:8,border:`1px solid ${t.red}30`,fontSize:11,color:t.red,fontWeight:500,marginTop:4}}>{importError}</div>}
+          </div>
+          <div style={{padding:12,borderTop:`1px solid ${t.border}`,display:"flex",gap:8}}>
+            <button onClick={()=>{setImportPreview(null);setImportSelected(new Set());setImportError("");}} style={{flex:1,padding:10,borderRadius:8,border:`1px solid ${t.border}`,background:"transparent",color:t.textSec,fontWeight:600,fontSize:12,cursor:"pointer"}}>Cancel</button>
+            <button onClick={confirmImport} disabled={importSelected.size===0} style={{flex:1,padding:10,borderRadius:8,border:"none",background:importSelected.size>0?`linear-gradient(135deg,${t.accent},${t.accentDark})`:`${t.accent}40`,color:"#fff",fontWeight:600,fontSize:12,cursor:importSelected.size>0?"pointer":"default",opacity:importSelected.size>0?1:0.5}}>Import {importSelected.size>0?`(${importSelected.size})`:""}</button>
           </div>
         </div>
       </div>}
