@@ -67,13 +67,6 @@ const DEFAULT_PROGRAMS = [
   ]},
 ];
 
-const genHist = (who) => {
-  const h=[]; const now=Date.now();
-  const bases = who==="me"?{"Bench Press":{w:155,split:"Push"},"Overhead Press":{w:95,split:"Push"},"Squats":{w:185,split:"Legs"},"Romanian Deadlifts":{w:175,split:"Legs"},"Barbell Rows":{w:135,split:"Pull"},"Pull-Ups":{w:25,split:"Pull"},"Leg Press":{w:300,split:"Legs"}}:who==="alex"?{"Bench Press":{w:145,split:"Push"},"Squats":{w:195,split:"Legs"},"Barbell Rows":{w:125,split:"Pull"},"Overhead Press":{w:85,split:"Push"},"Romanian Deadlifts":{w:165,split:"Legs"},"Leg Press":{w:280,split:"Legs"}}:{"Bench Press":{w:185,split:"Push"},"Squats":{w:245,split:"Legs"},"Barbell Rows":{w:165,split:"Pull"},"Overhead Press":{w:105,split:"Push"},"Romanian Deadlifts":{w:195,split:"Legs"}};
-  const so=["Push","Pull","Legs"];
-  for(let i=0;i<9;i++){const dt=new Date(now-(8-i)*3*86400000);const ds=dt.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=dt.toISOString().split("T")[0];const sn=so[i%3];Object.entries(bases).forEach(([ex,{w,split}])=>{if(split===sn)h.push({exercise:ex,date:ds,isoDate:iso,weight:w+i*5+Math.floor(Math.random()*5),reps:8+(i%3),sets:3,program:"Push / Pull / Legs",split});});}
-  return h;
-};
 
 const fc=(s)=>{const a=Math.abs(s);return `${Math.floor(a/60)}:${(a%60).toString().padStart(2,"0")}`;};
 const fcSigned=(s)=>s>=0?fc(s):`+${fc(s)}`;
@@ -85,7 +78,7 @@ const FRIEND_COLORS=["#3b82f6","#f59e0b","#ef4444","#10b981","#8b5cf6","#f472b6"
 export default function GymTracker({ user, signOut }){
   const [tab,setTab]=useState("log");
   const [programs,setPrograms]=useState([...DEFAULT_PROGRAMS]);
-  const [history,setHistory]=useState(()=>genHist("me"));
+  const [history,setHistory]=useState([]);
   const [friends,setFriends]=useState([]);
   const [selFriend,setSelFriend]=useState(0);
   const [logPhase,setLogPhase]=useState("home");
@@ -110,7 +103,7 @@ export default function GymTracker({ user, signOut }){
   const [profileName,setProfileName]=useState("");
   const [profileDraft,setProfileDraft]=useState("");
   const [friendCode,setFriendCode]=useState("");
-  const [appearance,setAppearance]=useState("dark");
+  const [appearance,setAppearance]=useState("auto");
   const [codeCopied,setCodeCopied]=useState(false);
   const [nameConfirmed,setNameConfirmed]=useState(false);
   const [confirmedSets,setConfirmedSets]=useState({});

@@ -26,9 +26,10 @@ function App() {
   };
 
   if (loading) {
+    const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
     return (
-      <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: "#636366", fontSize: 14, fontFamily: "system-ui" }}>Loading...</div>
+      <div style={{ minHeight: "100vh", background: dark ? "#0a0a0a" : "#f2f2f7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: dark ? "#636366" : "#8e8e93", fontSize: 14, fontFamily: "system-ui" }}>Loading...</div>
       </div>
     );
   }

@@ -1,16 +1,22 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
 const THEMES = {
   dark: {
-    bg:"#0a0a0a",surface:"#1c1c1e",surfaceAlt:"#2c2c2e",border:"#38383a",borderLight:"#38383a80",
-    text:"#f5f5f7",textDim:"#e5e5e7",textSec:"#98989d",textMuted:"#636366",textFaint:"#48484a",
-    accent:"#818cf8",accentDark:"#6366f1",accentBg:"#818cf815",
-    green:"#30d158",greenBg:"#30d15820",red:"#ff453a",redBg:"#ff453a20",
+    bg:"#0a0a0a",surface:"#1c1c1e",surfaceAlt:"#2c2c2e",border:"#38383a",
+    text:"#f5f5f7",textSec:"#98989d",textMuted:"#636366",textFaint:"#48484a",
+    accent:"#818cf8",accentDark:"#6366f1",
+    red:"#ff453a",redBg:"#ff453a20",
     inputBg:"#0a0a0a",
   },
+  light: {
+    bg:"#f2f2f7",surface:"#ffffff",surfaceAlt:"#e5e5ea",border:"#c6c6c8",
+    text:"#1c1c1e",textSec:"#636366",textMuted:"#8e8e93",textFaint:"#aeaeb2",
+    accent:"#5856d6",accentDark:"#4a48c4",
+    red:"#ff3b30",redBg:"#ff3b3015",
+    inputBg:"#f2f2f7",
+  },
 };
-const t = THEMES.dark;
 
 export default function Auth() {
   const [mode, setMode] = useState("login");
@@ -19,6 +25,16 @@ export default function Auth() {
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const h = (e) => setSystemDark(e.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  }, []);
+
+  const t = systemDark ? THEMES.dark : THEMES.light;
 
   const handleSignUp = async () => {
     if (!email.trim() || !password.trim() || !displayName.trim()) {
@@ -81,6 +97,7 @@ export default function Auth() {
 
   return (
     <div style={{ minHeight: "100vh", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "system-ui,-apple-system,sans-serif" }}>
+      <style>{`body{background:${t.bg}}`}</style>
       <div style={{ width: "100%", maxWidth: 380 }}>
         {/* Logo / Header */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
