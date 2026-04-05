@@ -116,6 +116,9 @@ export default function GymTracker({ user, signOut }){
   const [progressView,setProgressView]=useState("favorites");
   const [swappingExIdx,setSwappingExIdx]=useState(null);
   const [swapSearch,setSwapSearch]=useState("");
+  const [editSwapIdx,setEditSwapIdx]=useState(null);
+  const [editSwapSplit,setEditSwapSplit]=useState(null);
+  const [editSwapSearch,setEditSwapSearch]=useState("");
   const [friendsCompareView,setFriendsCompareView]=useState("favorites");
   const [friendsMuscleFilter,setFriendsMuscleFilter]=useState("Chest");
   const [showAddFriend,setShowAddFriend]=useState(false);
@@ -161,7 +164,7 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{if(user&&history.length)syncPerformanceStats(user.id,history);},[user,history.length]);
 
   // Exercise DB with custom rest overrides
-  const getExRest=(name)=>customRestTimes[name]??EXERCISE_DB[name]?.rest??90;
+  const getExRest=(name)=>customRestTimes[name]??exercises.find(e=>e.name===name)?.rest??EXERCISE_DB[name]?.rest??90;
   const EXERCISE_LIST=Object.entries(EXERCISE_DB).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest}));
 
   const prog=programs[selProgIdx];const split=selSplitIdx!==null?prog?.splits[selSplitIdx]:null;const exercises=split?.exercises||[];const allLoggedEx=[...new Set(history.map(h=>h.exercise))].sort();
@@ -172,7 +175,9 @@ export default function GymTracker({ user, signOut }){
   const delProg=(i)=>{if(programs.length<=1)return;setPrograms(p=>p.filter((_,j)=>j!==i));if(selProgIdx>=i&&selProgIdx>0)setSelProgIdx(selProgIdx-1);if(primaryProgIdx>=i&&primaryProgIdx>0)setPrimaryProgIdx(primaryProgIdx-1);};
   const addSplit=()=>{if(!newSplitName.trim()||!prog)return;const u=[...programs];u[selProgIdx]={...prog,splits:[...prog.splits,{name:newSplitName.trim(),exercises:[]}]};setPrograms(u);setNewSplitName("");setShowAddSplit(false);};
   const delSplit=(i)=>{const u=[...programs];u[selProgIdx]={...prog,splits:prog.splits.filter((_,j)=>j!==i)};setPrograms(u);};
-  const addExercise=()=>{if(!newExName.trim()||!split)return;const u=[...programs];const ns=[...prog.splits];ns[selSplitIdx]={...split,exercises:[...split.exercises,{name:newExName.trim(),muscle:newExMuscle}]};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setNewExName("");setExSearch("");setShowAddEx(false);};
+  const addExercise=()=>{if(!newExName.trim()||!split)return;const u=[...programs];const ns=[...prog.splits];const exName=newExName.trim();ns[selSplitIdx]={...split,exercises:[...split.exercises,{name:exName,muscle:newExMuscle,sets:3,rest:EXERCISE_DB[exName]?.rest||90}]};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setNewExName("");setExSearch("");setShowAddEx(false);};
+  const updateExField=(splitIdx,exIdx,field,value)=>{const u=[...programs];const ns=[...prog.splits];const ne=[...ns[splitIdx].exercises];ne[exIdx]={...ne[exIdx],[field]:value};ns[splitIdx]={...ns[splitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
+  const editSwapExercise=(splitIdx,exIdx,newEx)=>{const u=[...programs];const ns=[...prog.splits];const ne=[...ns[splitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[splitIdx]={...ns[splitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setEditSwapIdx(null);setEditSwapSplit(null);setEditSwapSearch("");};
   const pickExFromDB=(ex)=>{setNewExName(ex.name);setNewExMuscle(ex.muscle);};
   const delExercise=(i)=>{const u=[...programs];const ns=[...prog.splits];ns[selSplitIdx]={...split,exercises:split.exercises.filter((_,j)=>j!==i)};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
   const moveEx=(i,d)=>{const ni=i+d;if(ni<0||ni>=exercises.length)return;const u=[...programs];const ns=[...prog.splits];const ne=[...split.exercises];[ne[i],ne[ni]]=[ne[ni],ne[i]];ns[selSplitIdx]={...split,exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
@@ -188,7 +193,7 @@ export default function GymTracker({ user, signOut }){
     if(f==="weight"&&si>0&&sub===undefined)setManuallyEdited(t=>({...t,[`${ex}__${si}`]:true}));
     setWorkoutLog(l=>({...l,[gk(ex,si,sub)]:{...(l[gk(ex,si,sub)]||{weight:"",reps:""}),[f]:v}}));
   };
-  const getSC=(ex)=>setCounts[ex]||3;const addSC=(ex)=>setSetCounts(s=>({...s,[ex]:(s[ex]||3)+1}));const remSC=(ex)=>{const c=getSC(ex);if(c<=1)return;setSetCounts(s=>({...s,[ex]:c-1}));};
+  const getSC=(ex)=>setCounts[ex]||exercises.find(e=>e.name===ex)?.sets||3;const addSC=(ex)=>setSetCounts(s=>({...s,[ex]:(s[ex]||3)+1}));const remSC=(ex)=>{const c=getSC(ex);if(c<=1)return;setSetCounts(s=>({...s,[ex]:c-1}));};
   const getLastSession=(exName)=>{const e=history.filter(h=>h.exercise===exName);if(!e.length)return null;return[...e].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"))[0];};
 
   // Rest timer (counts past 0 into overtime)
@@ -212,7 +217,7 @@ export default function GymTracker({ user, signOut }){
   const hasLog=Object.values(workoutLog).some(s=>s.weight||s.reps);
 
   // Swap exercise in active workout
-  const swapExercise=(exIdx,newEx)=>{if(selSplitIdx===null)return;const u=[...programs];const ns=[...prog.splits];const ne=[...ns[selSplitIdx].exercises];ne[exIdx]={name:newEx.name,muscle:newEx.muscle};ns[selSplitIdx]={...ns[selSplitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setSwappingExIdx(null);setSwapSearch("");};
+  const swapExercise=(exIdx,newEx)=>{if(selSplitIdx===null)return;const u=[...programs];const ns=[...prog.splits];const ne=[...ns[selSplitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[selSplitIdx]={...ns[selSplitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setSwappingExIdx(null);setSwapSearch("");};
   const saveRestTime=(exName,secs)=>{if(secs>0)setCustomRestTimes(p=>({...p,[exName]:secs}));setEditingRestEx(null);setEditingRestVal("");};
   const toggleFavorite=(exName)=>{setFavoriteExercises(prev=>{const next=new Set(prev);if(next.has(exName))next.delete(exName);else next.add(exName);return next;});};
 
@@ -338,9 +343,46 @@ export default function GymTracker({ user, signOut }){
             {/* Edit panel */}
             {editing&&prog&&<div style={{marginBottom:14}}>
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Splits in {prog.name}</div>
-              {prog.splits.map((s,si)=><div key={si} style={{...card,padding:10,marginBottom:6}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><span style={{fontSize:12,fontWeight:700,color:t.green}}>{s.name}</span><button onClick={()=>delSplit(si)} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14}}>×</button></div>
-                {s.exercises.map((ex,ei)=><div key={ei} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 0",borderTop:ei>0?`1px solid ${t.borderLight}`:"none"}}><div style={{flex:1,fontSize:11,color:t.textDim}}>{ex.name}<span style={{color:MC[ex.muscle]||t.textSec,fontSize:9,marginLeft:4}}>{ex.muscle}</span><span style={{color:t.textFaint,fontSize:8,marginLeft:4}}>{fc(getExRest(ex.name))}</span></div><button onClick={()=>{setSelSplitIdx(si);moveEx(ei,-1);}} disabled={ei===0} style={{background:"none",border:"none",color:ei===0?t.border:t.textMuted,fontSize:10,padding:1}}>▲</button><button onClick={()=>{setSelSplitIdx(si);moveEx(ei,1);}} disabled={ei===s.exercises.length-1} style={{background:"none",border:"none",color:ei===s.exercises.length-1?t.border:t.textMuted,fontSize:10,padding:1}}>▼</button><button onClick={()=>{setSelSplitIdx(si);delExercise(ei);}} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14}}>×</button></div>)}
+              {prog.splits.map((s,si)=><div key={si} style={{...card,padding:10,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><span style={{fontSize:13,fontWeight:700,color:t.green}}>{s.name}</span><button onClick={()=>delSplit(si)} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14}}>×</button></div>
+                {s.exercises.map((ex,ei)=>{const exSets=ex.sets||3;const exRest=ex.rest||EXERCISE_DB[ex.name]?.rest||90;const isSwapping=editSwapSplit===si&&editSwapIdx===ei;return(
+                  <div key={ei} style={{padding:"8px 0",borderTop:ei>0?`1px solid ${t.borderLight}`:"none"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:t.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ex.name}</div>
+                        <div style={{fontSize:9,color:MC[ex.muscle]||t.textSec,fontWeight:600,marginTop:1}}>{ex.muscle}</div>
+                      </div>
+                      <button onClick={()=>{if(isSwapping){setEditSwapIdx(null);setEditSwapSplit(null);setEditSwapSearch("");}else{setEditSwapIdx(ei);setEditSwapSplit(si);setEditSwapSearch("");}}} style={{background:"none",border:`1px solid ${isSwapping?t.accent:t.border}`,borderRadius:5,padding:"3px 6px",cursor:"pointer",display:"flex",alignItems:"center",gap:3}} title="Swap exercise"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={isSwapping?t.accent:t.textFaint} strokeWidth="2.5" strokeLinecap="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg><span style={{fontSize:8,fontWeight:600,color:isSwapping?t.accent:t.textFaint}}>Swap</span></button>
+                      <div style={{display:"flex",flexDirection:"column",gap:1}}><button onClick={()=>{setSelSplitIdx(si);moveEx(ei,-1);}} disabled={ei===0} style={{background:"none",border:"none",color:ei===0?t.border:t.textMuted,fontSize:9,padding:0,cursor:ei===0?"default":"pointer",lineHeight:1}}>▲</button><button onClick={()=>{setSelSplitIdx(si);moveEx(ei,1);}} disabled={ei===s.exercises.length-1} style={{background:"none",border:"none",color:ei===s.exercises.length-1?t.border:t.textMuted,fontSize:9,padding:0,cursor:ei===s.exercises.length-1?"default":"pointer",lineHeight:1}}>▼</button></div>
+                      <button onClick={()=>{setSelSplitIdx(si);delExercise(ei);}} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14,padding:"0 2px"}}>×</button>
+                    </div>
+                    {/* Swap picker */}
+                    {isSwapping&&<div style={{marginBottom:6,padding:8,background:t.bg,borderRadius:8,border:`1px solid ${t.border}`}}>
+                      <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:4}}>SWAP WITH</div>
+                      <input value={editSwapSearch} onChange={e=>setEditSwapSearch(e.target.value)} placeholder="Search exercises..." autoFocus style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${t.border}`,background:t.surface,color:t.text,fontSize:13,outline:"none",marginBottom:4,boxSizing:"border-box"}}/>
+                      <div style={{maxHeight:140,overflowY:"auto"}}>
+                        {EXERCISE_LIST.filter(e=>e.name!==ex.name&&(editSwapSearch.trim()?e.name.toLowerCase().includes(editSwapSearch.toLowerCase()):e.muscle===ex.muscle)).slice(0,10).map(e=><button key={e.name} onClick={()=>editSwapExercise(si,ei,e)} style={{width:"100%",padding:"6px 8px",border:"none",borderBottom:`1px solid ${t.borderLight}`,background:t.surface,color:t.textDim,fontSize:11,textAlign:"left",cursor:"pointer",display:"flex",justifyContent:"space-between"}}><span>{e.name}</span><span style={{color:MC[e.muscle]||t.textSec,fontSize:9}}>{e.muscle} · {fc(e.rest)}</span></button>)}
+                        {EXERCISE_LIST.filter(e=>e.name!==ex.name&&(editSwapSearch.trim()?e.name.toLowerCase().includes(editSwapSearch.toLowerCase()):e.muscle===ex.muscle)).length===0&&<div style={{padding:8,textAlign:"center",fontSize:10,color:t.textFaint}}>No matches</div>}
+                      </div>
+                      <button onClick={()=>{setEditSwapIdx(null);setEditSwapSplit(null);setEditSwapSearch("");}} style={{marginTop:4,width:"100%",padding:"5px 0",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:10,cursor:"pointer"}}>Cancel</button>
+                    </div>}
+                    {/* Sets & Rest controls */}
+                    {!isSwapping&&<div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:t.textMuted,fontWeight:600}}>SETS</span>
+                        <button onClick={()=>updateExField(si,ei,"sets",Math.max(1,exSets-1))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${t.border}`,background:"transparent",color:t.textSec,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                        <span style={{fontSize:13,fontWeight:700,color:t.text,minWidth:16,textAlign:"center"}}>{exSets}</span>
+                        <button onClick={()=>updateExField(si,ei,"sets",exSets+1)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${t.border}`,background:"transparent",color:t.textSec,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                      </div>
+                      <div style={{width:1,height:16,background:t.border}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{fontSize:9,color:t.textMuted,fontWeight:600}}>REST</span>
+                        <button onClick={()=>updateExField(si,ei,"rest",Math.max(15,exRest-15))} style={{width:22,height:22,borderRadius:5,border:`1px solid ${t.border}`,background:"transparent",color:t.textSec,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                        <span style={{fontSize:12,fontWeight:600,color:t.text,minWidth:32,textAlign:"center"}}>{fc(exRest)}</span>
+                        <button onClick={()=>updateExField(si,ei,"rest",exRest+15)} style={{width:22,height:22,borderRadius:5,border:`1px solid ${t.border}`,background:"transparent",color:t.textSec,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                      </div>
+                    </div>}
+                  </div>);})}
                 {showAddEx&&selSplitIdx===si?<div style={{marginTop:6,padding:8,background:t.bg,borderRadius:8}}>
                   <input value={exSearch} onChange={e=>{setExSearch(e.target.value);if(!newExName)setNewExName("");}} placeholder="Search exercises..." autoFocus style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${t.border}`,background:t.surface,color:t.text,fontSize:13,outline:"none",marginBottom:4,boxSizing:"border-box"}}/>
                   {filteredExDB.length>0&&<div style={{maxHeight:120,overflowY:"auto",marginBottom:4,borderRadius:6,border:`1px solid ${t.border}`}}>
@@ -349,7 +391,7 @@ export default function GymTracker({ user, signOut }){
                   <input value={newExName} onChange={e=>setNewExName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addExercise()} placeholder="Exercise name..." style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${t.border}`,background:t.surface,color:t.text,fontSize:13,outline:"none",marginBottom:6,boxSizing:"border-box"}}/>
                   <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:6}}>{MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setNewExMuscle(m)} style={{padding:"2px 6px",borderRadius:10,fontSize:8,fontWeight:700,cursor:"pointer",border:newExMuscle===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:newExMuscle===m?`${MC[m]}20`:"transparent",color:newExMuscle===m?MC[m]:t.textFaint}}>{m}</button>)}</div>
                   <div style={{display:"flex",gap:4}}><button onClick={addExercise} style={{padding:"5px 12px",borderRadius:6,border:"none",background:t.green,color:"#fff",fontWeight:700,fontSize:11,cursor:"pointer"}}>Add</button><button onClick={()=>{setShowAddEx(false);setExSearch("");setNewExName("");}} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:11,cursor:"pointer"}}>Cancel</button></div>
-                </div>:<button onClick={()=>{setSelSplitIdx(si);setShowAddEx(true);setExSearch("");setNewExName("");}} style={{marginTop:4,background:"none",border:"none",color:t.accent,fontSize:10,fontWeight:600,cursor:"pointer",padding:0}}>+ Add Exercise</button>}
+                </div>:<button onClick={()=>{setSelSplitIdx(si);setShowAddEx(true);setExSearch("");setNewExName("");}} style={{marginTop:6,background:"none",border:"none",color:t.accent,fontSize:10,fontWeight:600,cursor:"pointer",padding:0}}>+ Add Exercise</button>}
               </div>)}
               {!showAddSplit?<button onClick={()=>setShowAddSplit(true)} style={{padding:10,borderRadius:10,border:`2px dashed ${t.border}`,background:"transparent",color:t.textFaint,fontWeight:600,fontSize:11,cursor:"pointer",width:"100%"}}>+ New Split</button>:<div style={{display:"flex",gap:6}}><input value={newSplitName} onChange={e=>setNewSplitName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addSplit()} placeholder="Split name..." autoFocus style={{flex:1,padding:"8px 10px",borderRadius:10,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:13,outline:"none"}}/><button onClick={addSplit} style={{padding:"8px 12px",borderRadius:10,border:"none",background:t.green,color:"#fff",fontWeight:700,fontSize:11,cursor:"pointer"}}>Add</button></div>}
             </div>}
