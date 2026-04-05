@@ -77,8 +77,8 @@ const FRIEND_COLORS=["#3b82f6","#f59e0b","#ef4444","#10b981","#8b5cf6","#f472b6"
 
 export default function GymTracker({ user, signOut }){
   const [tab,setTab]=useState("log");
-  const [programs,setPrograms]=useState([...DEFAULT_PROGRAMS]);
-  const [history,setHistory]=useState([]);
+  const [programs,setPrograms]=useState(()=>{try{const s=localStorage.getItem("gt_programs");return s?JSON.parse(s):[...DEFAULT_PROGRAMS];}catch{return [...DEFAULT_PROGRAMS];}});
+  const [history,setHistory]=useState(()=>{try{const s=localStorage.getItem("gt_history");return s?JSON.parse(s):[];}catch{return [];}});
   const [friends,setFriends]=useState([]);
   const [selFriend,setSelFriend]=useState(0);
   const [logPhase,setLogPhase]=useState("home");
@@ -91,7 +91,7 @@ export default function GymTracker({ user, signOut }){
   const [editing,setEditing]=useState(false);const [showAddProg,setShowAddProg]=useState(false);const [newProgName,setNewProgName]=useState("");const [showAddSplit,setShowAddSplit]=useState(false);const [newSplitName,setNewSplitName]=useState("");const [showAddEx,setShowAddEx]=useState(false);const [newExName,setNewExName]=useState("");const [newExMuscle,setNewExMuscle]=useState("Chest");
   const [exSearch,setExSearch]=useState("");
   const [chartEx,setChartEx]=useState("Bench Press");
-  const [primaryProgIdx,setPrimaryProgIdx]=useState(0);
+  const [primaryProgIdx,setPrimaryProgIdx]=useState(()=>{try{return parseInt(localStorage.getItem("gt_primary_prog"))||0;}catch{return 0;}});
   const [calMonth,setCalMonth]=useState(()=>{const n=new Date();return new Date(n.getFullYear(),n.getMonth(),1);});
   const [calSelDay,setCalSelDay]=useState(null);
   const [weekSelDay,setWeekSelDay]=useState(null);
@@ -103,16 +103,17 @@ export default function GymTracker({ user, signOut }){
   const [profileName,setProfileName]=useState("");
   const [profileDraft,setProfileDraft]=useState("");
   const [friendCode,setFriendCode]=useState("");
-  const [appearance,setAppearance]=useState("auto");
+  const [appearance,setAppearance]=useState(()=>localStorage.getItem("gt_appearance")||"auto");
   const [codeCopied,setCodeCopied]=useState(false);
   const [nameConfirmed,setNameConfirmed]=useState(false);
   const [confirmedSets,setConfirmedSets]=useState({});
   const [dbMuscleFilter,setDbMuscleFilter]=useState("All");
-  const [customRestTimes,setCustomRestTimes]=useState({});
+  const [customRestTimes,setCustomRestTimes]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_rest"))||{};}catch{return {};}});
+  const [customExercises,setCustomExercises]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_exercises"))||{};}catch{return {};}});
   const [editingRestEx,setEditingRestEx]=useState(null);
   const [editingRestVal,setEditingRestVal]=useState("");
   const [progressMuscleFilter,setProgressMuscleFilter]=useState("All");
-  const [favoriteExercises,setFavoriteExercises]=useState(()=>new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]));
+  const [favoriteExercises,setFavoriteExercises]=useState(()=>{try{const s=localStorage.getItem("gt_favorites");return s?new Set(JSON.parse(s)):new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}catch{return new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}});
   const [progressView,setProgressView]=useState("favorites");
   const [swappingExIdx,setSwappingExIdx]=useState(null);
   const [swapSearch,setSwapSearch]=useState("");
@@ -123,7 +124,7 @@ export default function GymTracker({ user, signOut }){
   const [friendsMuscleFilter,setFriendsMuscleFilter]=useState("Chest");
   const [showAddFriend,setShowAddFriend]=useState(false);
   const [addFriendCode,setAddFriendCode]=useState("");
-  const [friendInfoDismissed,setFriendInfoDismissed]=useState(false);
+  const [friendInfoDismissed,setFriendInfoDismissed]=useState(()=>localStorage.getItem("gt_friend_info_dismissed")==="true");
   const [workoutStart,setWorkoutStart]=useState(null);
   const [sessionElapsed,setSessionElapsed]=useState(0);
   const [systemDark,setSystemDark]=useState(()=>window.matchMedia?.("(prefers-color-scheme: dark)").matches??true);
@@ -164,18 +165,28 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{if(user&&history.length)syncPerformanceStats(user.id,history);},[user,history.length]);
 
   // Exercise DB with custom rest overrides
-  const getExRest=(name)=>customRestTimes[name]??exercises.find(e=>e.name===name)?.rest??EXERCISE_DB[name]?.rest??90;
-  const EXERCISE_LIST=Object.entries(EXERCISE_DB).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest}));
+  // Persist state to localStorage
+  useEffect(()=>{localStorage.setItem("gt_programs",JSON.stringify(programs));},[programs]);
+  useEffect(()=>{localStorage.setItem("gt_history",JSON.stringify(history));},[history]);
+  useEffect(()=>{localStorage.setItem("gt_primary_prog",String(primaryProgIdx));},[primaryProgIdx]);
+  useEffect(()=>{localStorage.setItem("gt_appearance",appearance);},[appearance]);
+  useEffect(()=>{localStorage.setItem("gt_custom_rest",JSON.stringify(customRestTimes));},[customRestTimes]);
+  useEffect(()=>{localStorage.setItem("gt_custom_exercises",JSON.stringify(customExercises));},[customExercises]);
+  useEffect(()=>{localStorage.setItem("gt_favorites",JSON.stringify([...favoriteExercises]));},[favoriteExercises]);
+  useEffect(()=>{localStorage.setItem("gt_friend_info_dismissed",String(friendInfoDismissed));},[friendInfoDismissed]);
+  const fullExDB={...EXERCISE_DB,...customExercises};
+  const getExRest=(name)=>customRestTimes[name]??exercises.find(e=>e.name===name)?.rest??fullExDB[name]?.rest??90;
+  const EXERCISE_LIST=Object.entries(fullExDB).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest}));
 
   const prog=programs[selProgIdx];const split=selSplitIdx!==null?prog?.splits[selSplitIdx]:null;const exercises=split?.exercises||[];const allLoggedEx=[...new Set(history.map(h=>h.exercise))].sort();
-  const allDbExNames=Object.keys(EXERCISE_DB);
+  const allDbExNames=Object.keys(fullExDB);
   const allProgressEx=[...new Set([...allLoggedEx,...allDbExNames])].sort();
 
   const addProg=()=>{if(!newProgName.trim())return;setPrograms(p=>[...p,{id:`p${Date.now()}`,name:newProgName.trim(),splits:[]}]);setNewProgName("");setShowAddProg(false);};
   const delProg=(i)=>{if(programs.length<=1)return;setPrograms(p=>p.filter((_,j)=>j!==i));if(selProgIdx>=i&&selProgIdx>0)setSelProgIdx(selProgIdx-1);if(primaryProgIdx>=i&&primaryProgIdx>0)setPrimaryProgIdx(primaryProgIdx-1);};
   const addSplit=()=>{if(!newSplitName.trim()||!prog)return;const u=[...programs];u[selProgIdx]={...prog,splits:[...prog.splits,{name:newSplitName.trim(),exercises:[]}]};setPrograms(u);setNewSplitName("");setShowAddSplit(false);};
   const delSplit=(i)=>{const u=[...programs];u[selProgIdx]={...prog,splits:prog.splits.filter((_,j)=>j!==i)};setPrograms(u);};
-  const addExercise=()=>{if(!newExName.trim()||!split)return;const u=[...programs];const ns=[...prog.splits];const exName=newExName.trim();ns[selSplitIdx]={...split,exercises:[...split.exercises,{name:exName,muscle:newExMuscle,sets:3,rest:EXERCISE_DB[exName]?.rest||90}]};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setNewExName("");setExSearch("");setShowAddEx(false);};
+  const addExercise=()=>{if(!newExName.trim()||!split)return;const u=[...programs];const ns=[...prog.splits];const exName=newExName.trim();const rest=fullExDB[exName]?.rest||90;ns[selSplitIdx]={...split,exercises:[...split.exercises,{name:exName,muscle:newExMuscle,sets:3,rest}]};u[selProgIdx]={...prog,splits:ns};setPrograms(u);if(!EXERCISE_DB[exName])setCustomExercises(prev=>({...prev,[exName]:{muscle:newExMuscle,rest}}));setNewExName("");setExSearch("");setShowAddEx(false);};
   const updateExField=(splitIdx,exIdx,field,value)=>{const u=[...programs];const ns=[...prog.splits];const ne=[...ns[splitIdx].exercises];ne[exIdx]={...ne[exIdx],[field]:value};ns[splitIdx]={...ns[splitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
   const editSwapExercise=(splitIdx,exIdx,newEx)=>{const u=[...programs];const ns=[...prog.splits];const ne=[...ns[splitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[splitIdx]={...ns[splitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setEditSwapIdx(null);setEditSwapSplit(null);setEditSwapSearch("");};
   const pickExFromDB=(ex)=>{setNewExName(ex.name);setNewExMuscle(ex.muscle);};
@@ -345,7 +356,7 @@ export default function GymTracker({ user, signOut }){
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Splits in {prog.name}</div>
               {prog.splits.map((s,si)=><div key={si} style={{...card,padding:10,marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><span style={{fontSize:13,fontWeight:700,color:t.green}}>{s.name}</span><button onClick={()=>delSplit(si)} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14}}>×</button></div>
-                {s.exercises.map((ex,ei)=>{const exSets=ex.sets||3;const exRest=ex.rest||EXERCISE_DB[ex.name]?.rest||90;const isSwapping=editSwapSplit===si&&editSwapIdx===ei;return(
+                {s.exercises.map((ex,ei)=>{const exSets=ex.sets||3;const exRest=ex.rest||fullExDB[ex.name]?.rest||90;const isSwapping=editSwapSplit===si&&editSwapIdx===ei;return(
                   <div key={ei} style={{padding:"8px 0",borderTop:ei>0?`1px solid ${t.borderLight}`:"none"}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                       <div style={{flex:1,minWidth:0}}>
@@ -578,7 +589,7 @@ export default function GymTracker({ user, signOut }){
           {/* Sets per muscle group — last 7 days */}
           {(()=>{const now=new Date();const sevenAgo=new Date(now);sevenAgo.setDate(now.getDate()-6);sevenAgo.setHours(0,0,0,0);const sevenIso=sevenAgo.toISOString().split("T")[0];
             const recent=history.filter(h=>(h.isoDate||"0")>=sevenIso);
-            const muscleMap={};recent.forEach(h=>{const m=EXERCISE_DB[h.exercise]?.muscle||"Other";muscleMap[m]=(muscleMap[m]||0)+(h.sets||0);});
+            const muscleMap={};recent.forEach(h=>{const m=fullExDB[h.exercise]?.muscle||"Other";muscleMap[m]=(muscleMap[m]||0)+(h.sets||0);});
             const entries=MUSCLE_GROUPS.map(m=>({muscle:m,sets:muscleMap[m]||0})).filter(e=>e.sets>0);
             const maxSets=Math.max(...entries.map(e=>e.sets),1);
             if(!entries.length)return <div style={{...card,padding:14,textAlign:"center"}}><div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Sets per Muscle — Last 7 Days</div><div style={{fontSize:11,color:t.textFaint}}>No workouts logged in the past 7 days.</div></div>;
@@ -607,7 +618,7 @@ export default function GymTracker({ user, signOut }){
             {MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setProgressMuscleFilter(m)} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:progressMuscleFilter===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:progressMuscleFilter===m?`${MC[m]}20`:"transparent",color:progressMuscleFilter===m?MC[m]:t.textMuted}}>{m}</button>)}
           </div>}
           <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Exercise</div>
-          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:14}}>{(()=>{const list=progressView==="favorites"?[...favoriteExercises].sort():allProgressEx.filter(ex=>{const m=EXERCISE_DB[ex]?.muscle;return m===progressMuscleFilter;});return list.map(ex=>{const hasData=allLoggedEx.includes(ex);return <button key={ex} onClick={()=>setChartEx(ex)} style={{...pill(chartEx===ex,t.accent),opacity:hasData?1:0.6}}>{ex}</button>;});})()}</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:14}}>{(()=>{const list=progressView==="favorites"?[...favoriteExercises].sort():allProgressEx.filter(ex=>{const m=fullExDB[ex]?.muscle;return m===progressMuscleFilter;});return list.map(ex=>{const hasData=allLoggedEx.includes(ex);return <button key={ex} onClick={()=>setChartEx(ex)} style={{...pill(chartEx===ex,t.accent),opacity:hasData?1:0.6}}>{ex}</button>;});})()}</div>
           {(()=>{const data=getCD(history,chartEx),pr=getPR(history,chartEx);if(!data.length) return <div style={{textAlign:"center",padding:30,color:t.textFaint}}>No data for {chartEx} yet. Start logging to see progress.</div>;
             return <React.Fragment>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{fontSize:15,fontWeight:700,color:t.text}}>{chartEx}</div><div style={{fontSize:10,color:t.yellow,fontWeight:700,background:t.yellowBg,padding:"3px 8px",borderRadius:8}}>PR: {pr}lbs</div></div>
@@ -696,7 +707,7 @@ export default function GymTracker({ user, signOut }){
             {friendsCompareView==="muscle"&&<div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:8}}>
               {MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setFriendsMuscleFilter(m)} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:friendsMuscleFilter===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:friendsMuscleFilter===m?`${MC[m]}20`:"transparent",color:friendsMuscleFilter===m?MC[m]:t.textMuted}}>{m}</button>)}
             </div>}
-            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>{(()=>{const list=friendsCompareView==="favorites"?[...favoriteExercises].sort():allDbExNames.filter(ex=>EXERCISE_DB[ex]?.muscle===friendsMuscleFilter).sort();return list.map(ex=><button key={ex} onClick={()=>setChartEx(ex)} style={pill(chartEx===ex,f.color)}>{ex}</button>);})()}</div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>{(()=>{const list=friendsCompareView==="favorites"?[...favoriteExercises].sort():allDbExNames.filter(ex=>fullExDB[ex]?.muscle===friendsMuscleFilter).sort();return list.map(ex=><button key={ex} onClick={()=>setChartEx(ex)} style={pill(chartEx===ex,f.color)}>{ex}</button>);})()}</div>
             {(()=>{const fD=getCD(f.history,chartEx),mD=getCD(history,chartEx);const allD=[...new Set([...fD.map(d=>d.date),...mD.map(d=>d.date)])];const merged=allD.map(d=>({date:d,[f.name]:fD.find(x=>x.date===d)?.weight||null,You:mD.find(x=>x.date===d)?.weight||null}));if(!merged.length) return <div style={{textAlign:"center",padding:20,color:t.textFaint}}>No data for {chartEx}.</div>;
               return <div style={{...card,padding:"12px 4px 4px 0"}}><ResponsiveContainer width="100%" height={180}><LineChart data={merged}><CartesianGrid strokeDasharray="3 3" stroke={t.border}/><XAxis dataKey="date" tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}}/><YAxis tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}} domain={["dataMin-10","dataMax+10"]}/><Tooltip contentStyle={{background:t.surface,border:`1px solid ${t.border}`,borderRadius:8,fontSize:11,color:t.text}}/><Line type="monotone" dataKey={f.name} stroke={f.color} strokeWidth={2} dot={{fill:f.color,r:3}} connectNulls/><Line type="monotone" dataKey="You" stroke={t.green} strokeWidth={2} dot={{fill:t.green,r:3}} connectNulls/></LineChart></ResponsiveContainer><div style={{display:"flex",justifyContent:"center",gap:14,paddingBottom:4}}><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:f.color}}/><span style={{color:t.textSec}}>{f.name}</span></div><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:t.green}}/><span style={{color:t.textSec}}>You</span></div></div></div>
             })()}
