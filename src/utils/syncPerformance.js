@@ -115,3 +115,46 @@ export async function syncCustomExercises(userId, customExercises) {
     console.warn("Custom exercises sync failed:", err.message);
   }
 }
+
+// Sync all app data (programs, history, favorites, etc.) to Supabase
+export async function syncAppData(userId, appData) {
+  if (!userId) return;
+  try {
+    const { error } = await supabase
+      .from("profiles")
+      .update({ app_data: appData })
+      .eq("id", userId);
+    if (error) {
+      if (error.message?.includes("column") || error.code === "42703") {
+        console.warn("[AppSync] app_data column doesn't exist yet. Run: ALTER TABLE profiles ADD COLUMN IF NOT EXISTS app_data jsonb DEFAULT '{}';");
+      } else {
+        console.warn("[AppSync] Failed:", error.message);
+      }
+    } else {
+      console.log("[AppSync] Synced to cloud");
+    }
+  } catch (err) {
+    console.warn("[AppSync] Failed:", err.message);
+  }
+}
+
+// Fetch app data from Supabase on login
+export async function fetchAppData(userId) {
+  if (!userId) return null;
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("app_data")
+      .eq("id", userId)
+      .single();
+    if (error) {
+      if (error.message?.includes("column") || error.code === "42703") return null;
+      console.warn("[AppSync] Fetch failed:", error.message);
+      return null;
+    }
+    return data?.app_data || null;
+  } catch (err) {
+    console.warn("[AppSync] Fetch failed:", err.message);
+    return null;
+  }
+}

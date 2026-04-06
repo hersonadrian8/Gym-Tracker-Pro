@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { supabase } from "./supabaseClient";
-import { syncPerformanceStats, fetchFriendStats, syncCustomExercises } from "./utils/syncPerformance";
+import { syncPerformanceStats, fetchFriendStats, syncCustomExercises, syncAppData, fetchAppData } from "./utils/syncPerformance";
 
 const MUSCLE_GROUPS = ["Chest","Back","Shoulders","Quads","Hamstrings","Glutes","Triceps","Biceps","Calves","Core","Forearms"];
 const MC = { Chest:"#ef4444",Back:"#3b82f6",Shoulders:"#f59e0b",Quads:"#10b981",Hamstrings:"#8b5cf6",Glutes:"#f472b6",Triceps:"#ec4899",Biceps:"#f97316",Calves:"#06b6d4",Core:"#a78bfa",Forearms:"#84cc16" };
@@ -144,11 +144,25 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{const mq=window.matchMedia("(prefers-color-scheme: dark)");const h=(e)=>setSystemDark(e.matches);mq.addEventListener("change",h);return()=>mq.removeEventListener("change",h);},[]);
   const t=THEMES[appearance==="auto"?(systemDark?"dark":"light"):appearance]||THEMES.dark;
 
-  // Load profile from Supabase (friend code + username)
+  // Load profile + app data from Supabase on login
+  const [cloudLoaded,setCloudLoaded]=useState(false);
   useEffect(()=>{if(!user)return;(async()=>{try{
     const {data,error}=await supabase.from("profiles").select("username,friend_code,custom_exercises").eq("id",user.id).single();
     if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}if(data.custom_exercises&&typeof data.custom_exercises==="object"){setCustomExercises(prev=>({...data.custom_exercises,...prev}));}}
-  }catch(e){/* offline */}})();},[user]);
+    // Load full app data from cloud
+    const cloud=await fetchAppData(user.id);
+    if(cloud){
+      if(cloud.programs&&cloud.programs.length)setPrograms(prev=>{const local=prev;const remote=cloud.programs;return remote.length>=local.length||(JSON.stringify(local)===JSON.stringify([...DEFAULT_PROGRAMS]))?remote:local;});
+      if(cloud.history&&cloud.history.length)setHistory(prev=>{const merged=[...prev];cloud.history.forEach(ch=>{if(!merged.find(h=>h.exercise===ch.exercise&&h.isoDate===ch.isoDate&&h.split===ch.split))merged.push(ch);});return merged;});
+      if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(prev=>prev===0?cloud.primaryProgIdx:prev);
+      if(cloud.appearance)setAppearance(prev=>prev==="auto"?cloud.appearance:prev);
+      if(cloud.customRestTimes)setCustomRestTimes(prev=>({...cloud.customRestTimes,...prev}));
+      if(cloud.favoriteExercises&&cloud.favoriteExercises.length)setFavoriteExercises(prev=>{const merged=new Set([...prev,...cloud.favoriteExercises]);return merged;});
+      if(cloud.hiddenExercises&&cloud.hiddenExercises.length)setHiddenExercises(prev=>{const merged=new Set([...prev,...cloud.hiddenExercises]);return merged;});
+      console.log("[AppSync] Loaded from cloud");
+    }
+    setCloudLoaded(true);
+  }catch(e){console.warn("[AppSync] Load failed:",e.message);setCloudLoaded(true);}})();},[user]);
 
   // Load friends from Supabase
   const loadFriends=useCallback(async()=>{if(!user)return;setFriendsLoading(true);try{
@@ -171,7 +185,26 @@ export default function GymTracker({ user, signOut }){
   // Sync custom exercises to Supabase
   useEffect(()=>{if(user&&Object.keys(customExercises).length>0)syncCustomExercises(user.id,customExercises);},[user,customExercises]);
 
-  // Exercise DB with custom rest overrides
+  // Sync all app data to Supabase (debounced)
+  const syncTimerRef=useRef(null);
+  useEffect(()=>{
+    if(!user||!cloudLoaded)return;
+    if(syncTimerRef.current)clearTimeout(syncTimerRef.current);
+    syncTimerRef.current=setTimeout(()=>{
+      const appData={
+        programs,
+        history,
+        primaryProgIdx,
+        appearance,
+        customRestTimes,
+        favoriteExercises:[...favoriteExercises],
+        hiddenExercises:[...hiddenExercises],
+      };
+      syncAppData(user.id,appData);
+    },2000);
+    return()=>{if(syncTimerRef.current)clearTimeout(syncTimerRef.current);};
+  },[user,cloudLoaded,programs,history,primaryProgIdx,appearance,customRestTimes,favoriteExercises,hiddenExercises]);
+
   // Persist state to localStorage
   useEffect(()=>{localStorage.setItem("gt_programs",JSON.stringify(programs));},[programs]);
   useEffect(()=>{localStorage.setItem("gt_history",JSON.stringify(history));},[history]);
