@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { supabase } from "./supabaseClient";
-import { syncPerformanceStats, fetchFriendStats } from "./utils/syncPerformance";
+import { syncPerformanceStats, fetchFriendStats, syncCustomExercises } from "./utils/syncPerformance";
 
 const MUSCLE_GROUPS = ["Chest","Back","Shoulders","Quads","Hamstrings","Glutes","Triceps","Biceps","Calves","Core","Forearms"];
 const MC = { Chest:"#ef4444",Back:"#3b82f6",Shoulders:"#f59e0b",Quads:"#10b981",Hamstrings:"#8b5cf6",Glutes:"#f472b6",Triceps:"#ec4899",Biceps:"#f97316",Calves:"#06b6d4",Core:"#a78bfa",Forearms:"#84cc16" };
@@ -146,8 +146,8 @@ export default function GymTracker({ user, signOut }){
 
   // Load profile from Supabase (friend code + username)
   useEffect(()=>{if(!user)return;(async()=>{try{
-    const {data,error}=await supabase.from("profiles").select("username,friend_code").eq("id",user.id).single();
-    if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}}
+    const {data,error}=await supabase.from("profiles").select("username,friend_code,custom_exercises").eq("id",user.id).single();
+    if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}if(data.custom_exercises&&typeof data.custom_exercises==="object"){setCustomExercises(prev=>({...data.custom_exercises,...prev}));}}
   }catch(e){/* offline */}})();},[user]);
 
   // Load friends from Supabase
@@ -155,18 +155,21 @@ export default function GymTracker({ user, signOut }){
     const {data:ships,error:sErr}=await supabase.from("friendships").select("friend_id").eq("user_id",user.id);
     if(sErr||!ships||!ships.length){setFriends([]);setFriendsLoading(false);return;}
     const friendIds=ships.map(s=>s.friend_id);
-    const {data:profiles,error:pErr}=await supabase.from("profiles").select("id,username").in("id",friendIds);
+    const {data:profiles,error:pErr}=await supabase.from("profiles").select("id,username,custom_exercises").in("id",friendIds);
     if(pErr){setFriendsLoading(false);return;}
     const friendsList=await Promise.all((profiles||[]).map(async(p,i)=>{
       const hist=await fetchFriendStats(p.id);
-      return{id:p.id,name:p.username||"Friend",history:hist,color:FRIEND_COLORS[i%FRIEND_COLORS.length]};
+      const friendCustomEx=p.custom_exercises&&typeof p.custom_exercises==="object"?p.custom_exercises:{};
+      return{id:p.id,name:p.username||"Friend",history:hist,customExercises:friendCustomEx,color:FRIEND_COLORS[i%FRIEND_COLORS.length]};
     }));
     setFriends(friendsList);
   }catch(e){/* offline */}setFriendsLoading(false);},[user]);
   useEffect(()=>{loadFriends();},[loadFriends]);
 
   // Sync performance stats on mount
-  useEffect(()=>{if(user&&history.length)syncPerformanceStats(user.id,history);},[user,history.length]);
+  useEffect(()=>{if(user&&history.length)syncPerformanceStats(user.id,history,{...EXERCISE_DB,...customExercises});},[user,history.length]);
+  // Sync custom exercises to Supabase
+  useEffect(()=>{if(user&&Object.keys(customExercises).length>0)syncCustomExercises(user.id,customExercises);},[user,customExercises]);
 
   // Exercise DB with custom rest overrides
   // Persist state to localStorage
@@ -235,7 +238,7 @@ export default function GymTracker({ user, signOut }){
     exList.forEach(ex=>{const c=getSC(ex.name);let maxW=0,tR=0,valid=0;const setDetails=[];
       for(let i=0;i<c;i++){const tp=getType(ex.name,i);if(tp==="D"){const drops=[];for(let dd=0;dd<3;dd++){const s=getS(ex.name,i,dd);const w=parseFloat(s.weight),r=parseInt(s.reps);if(w>0){drops.push({weight:w,reps:r||0});if(w>maxW)maxW=w;if(r>0){tR+=r;valid++;}}}if(drops.length>0)setDetails.push({type:"D",drops});}else{const wVal=getEffectiveWeight(ex.name,i);const s=getS(ex.name,i);const w=parseFloat(wVal),r=parseInt(s.reps);if(w>0&&r>0){if(w>maxW)maxW=w;tR+=r;valid++;setDetails.push({type:tp,weight:w,reps:r});}}}
       if(valid>0)entries.push({exercise:ex.name,date:d,isoDate:iso,weight:maxW,reps:Math.round(tR/valid),sets:valid,program:pName,split:sName,setDetails});});
-    if(entries.length>0){const topLift=[...entries].sort((a,b)=>b.weight-a.weight)[0];const elapsed=workoutStart?Math.floor((Date.now()-workoutStart)/1000):0;setWorkoutSummary({split:sName,program:pName,entries,topLift,date:d,duration:elapsed});setHistory(h=>{const next=[...h,...entries];if(user)syncPerformanceStats(user.id,next);return next;});setWorkoutLog({});setSetCounts({});setManuallyEdited({});setLogPhase("home");setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();}};
+    if(entries.length>0){const topLift=[...entries].sort((a,b)=>b.weight-a.weight)[0];const elapsed=workoutStart?Math.floor((Date.now()-workoutStart)/1000):0;setWorkoutSummary({split:sName,program:pName,entries,topLift,date:d,duration:elapsed});setHistory(h=>{const next=[...h,...entries];if(user)syncPerformanceStats(user.id,next,fullExDB);return next;});setWorkoutLog({});setSetCounts({});setManuallyEdited({});setLogPhase("home");setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();}};
 
   const confirmSet=(exName,exIdx,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>({...p,[key]:true}));startR(getExRest(exName),exIdx,setIdx);};
   const isSetConfirmed=(exName,setIdx)=>!!confirmedSets[`${exName}__${setIdx}`];
@@ -758,7 +761,7 @@ export default function GymTracker({ user, signOut }){
             {friendsCompareView==="muscle"&&<div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:8}}>
               {MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setFriendsMuscleFilter(m)} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:friendsMuscleFilter===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:friendsMuscleFilter===m?`${MC[m]}20`:"transparent",color:friendsMuscleFilter===m?MC[m]:t.textMuted}}>{m}</button>)}
             </div>}
-            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>{(()=>{const list=friendsCompareView==="favorites"?[...favoriteExercises].sort():allDbExNames.filter(ex=>fullExDB[ex]?.muscle===friendsMuscleFilter).sort();return list.map(ex=><button key={ex} onClick={()=>setChartEx(ex)} style={pill(chartEx===ex,f.color)}>{ex}</button>);})()}</div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>{(()=>{const friendDb={...fullExDB,...(f.customExercises||{})};(f.history||[]).forEach(h=>{if(h.muscle&&h.exercise&&!friendDb[h.exercise])friendDb[h.exercise]={muscle:h.muscle,rest:90};});const combinedNames=[...new Set([...Object.keys(fullExDB),...Object.keys(friendDb)])];const list=friendsCompareView==="favorites"?[...favoriteExercises].sort():combinedNames.filter(ex=>(friendDb[ex]?.muscle||fullExDB[ex]?.muscle)===friendsMuscleFilter).sort();return list.map(ex=><button key={ex} onClick={()=>setChartEx(ex)} style={pill(chartEx===ex,f.color)}>{ex}</button>);})()}</div>
             {(()=>{const fD=getCD(f.history,chartEx),mD=getCD(history,chartEx);const allD=[...new Set([...fD.map(d=>d.date),...mD.map(d=>d.date)])];const merged=allD.map(d=>({date:d,[f.name]:fD.find(x=>x.date===d)?.weight||null,You:mD.find(x=>x.date===d)?.weight||null}));if(!merged.length) return <div style={{textAlign:"center",padding:20,color:t.textFaint}}>No data for {chartEx}.</div>;
               return <div style={{...card,padding:"12px 4px 4px 0"}}><ResponsiveContainer width="100%" height={180}><LineChart data={merged}><CartesianGrid strokeDasharray="3 3" stroke={t.border}/><XAxis dataKey="date" tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}}/><YAxis tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}} domain={["dataMin-10","dataMax+10"]}/><Tooltip contentStyle={{background:t.surface,border:`1px solid ${t.border}`,borderRadius:8,fontSize:11,color:t.text}}/><Line type="monotone" dataKey={f.name} stroke={f.color} strokeWidth={2} dot={{fill:f.color,r:3}} connectNulls/><Line type="monotone" dataKey="You" stroke={t.green} strokeWidth={2} dot={{fill:t.green,r:3}} connectNulls/></LineChart></ResponsiveContainer><div style={{display:"flex",justifyContent:"center",gap:14,paddingBottom:4}}><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:f.color}}/><span style={{color:t.textSec}}>{f.name}</span></div><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:t.green}}/><span style={{color:t.textSec}}>You</span></div></div></div>
             })()}

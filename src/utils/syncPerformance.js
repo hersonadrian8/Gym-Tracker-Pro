@@ -1,18 +1,20 @@
 import { supabase } from "../supabaseClient";
 
-export async function syncPerformanceStats(userId, history) {
+export async function syncPerformanceStats(userId, history, exerciseDb = {}) {
   if (!userId || !history || !history.length) return;
 
   try {
-    // Get already synced entries to avoid duplicates
     const lastSyncKey = `gt_last_sync_${userId}`;
+    const migrationKey = `gt_sync_v2_${userId}`;
+    if (!localStorage.getItem(migrationKey)) {
+      localStorage.removeItem(lastSyncKey);
+      localStorage.setItem(migrationKey, "1");
+    }
     const lastSync = localStorage.getItem(lastSyncKey) || "1970-01-01";
 
-    // Filter entries that are new since last sync
     const newEntries = history.filter(h => h.isoDate && h.isoDate >= lastSync);
     if (!newEntries.length) return;
 
-    // Build rows for upsert
     const rows = newEntries.map(h => ({
       user_id: userId,
       exercise_name: h.exercise,
@@ -20,25 +22,34 @@ export async function syncPerformanceStats(userId, history) {
       reps: h.reps,
       sets: h.sets,
       workout_date: h.isoDate,
+      muscle: exerciseDb[h.exercise]?.muscle || null,
+      program: h.program || null,
+      split: h.split || null,
     }));
 
-    // Upsert in batches of 50
     for (let i = 0; i < rows.length; i += 50) {
       const batch = rows.slice(i, i + 50);
       const { error } = await supabase
         .from("performance_stats")
         .upsert(batch, { onConflict: "user_id,exercise_name,workout_date" });
       if (error) {
-        console.warn("Sync batch failed:", error.message);
-        return; // Don't update lastSync if we failed
+        // Fallback: try without new columns if they don't exist yet
+        if (error.message && (error.message.includes("column") || error.code === "42703")) {
+          const fallbackBatch = batch.map(({ muscle, program, split, ...rest }) => rest);
+          const { error: err2 } = await supabase
+            .from("performance_stats")
+            .upsert(fallbackBatch, { onConflict: "user_id,exercise_name,workout_date" });
+          if (err2) { console.warn("Sync fallback failed:", err2.message); return; }
+        } else {
+          console.warn("Sync batch failed:", error.message);
+          return;
+        }
       }
     }
 
-    // Update last sync timestamp
     const maxDate = newEntries.reduce((m, h) => (h.isoDate > m ? h.isoDate : m), "1970-01-01");
     localStorage.setItem(lastSyncKey, maxDate);
   } catch (err) {
-    // Silent fail — offline or error, don't break the app
     console.warn("Performance sync failed:", err.message);
   }
 }
@@ -47,16 +58,30 @@ export async function fetchFriendStats(friendId) {
   try {
     const { data, error } = await supabase
       .from("performance_stats")
-      .select("exercise_name, weight, reps, sets, workout_date")
+      .select("exercise_name, weight, reps, sets, workout_date, muscle, program, split")
       .eq("user_id", friendId)
       .order("workout_date", { ascending: true });
 
     if (error) {
+      // Fallback: try without new columns
+      if (error.message && (error.message.includes("column") || error.code === "42703")) {
+        const { data: d2, error: e2 } = await supabase
+          .from("performance_stats")
+          .select("exercise_name, weight, reps, sets, workout_date")
+          .eq("user_id", friendId)
+          .order("workout_date", { ascending: true });
+        if (e2 || !d2) return [];
+        return d2.map(row => ({
+          exercise: row.exercise_name,
+          date: new Date(row.workout_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          isoDate: row.workout_date,
+          weight: row.weight, reps: row.reps, sets: row.sets,
+        }));
+      }
       console.warn("Failed to fetch friend stats:", error.message);
       return [];
     }
 
-    // Map to the history format used by the app
     return (data || []).map(row => ({
       exercise: row.exercise_name,
       date: new Date(row.workout_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
@@ -64,9 +89,27 @@ export async function fetchFriendStats(friendId) {
       weight: row.weight,
       reps: row.reps,
       sets: row.sets,
+      muscle: row.muscle || null,
+      program: row.program || null,
+      split: row.split || null,
     }));
   } catch (err) {
     console.warn("Failed to fetch friend stats:", err.message);
     return [];
+  }
+}
+
+export async function syncCustomExercises(userId, customExercises) {
+  if (!userId) return;
+  try {
+    const { error } = await supabase
+      .from("profiles")
+      .update({ custom_exercises: customExercises })
+      .eq("id", userId);
+    if (error && !error.message?.includes("column")) {
+      console.warn("Custom exercises sync failed:", error.message);
+    }
+  } catch (err) {
+    console.warn("Custom exercises sync failed:", err.message);
   }
 }
