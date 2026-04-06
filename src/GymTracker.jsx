@@ -172,12 +172,18 @@ export default function GymTracker({ user, signOut }){
     const {data:profiles,error:pErr}=await supabase.from("profiles").select("id,username,custom_exercises").in("id",friendIds);
     console.log("[Friends] profiles query:",pErr?pErr.message:"OK",profiles?.length,"friends",profiles?.map(p=>({id:p.id,name:p.username,customEx:Object.keys(p.custom_exercises||{})})));
     if(pErr){setFriendsLoading(false);return;}
+    const allFriendCustomEx={};
     const friendsList=await Promise.all((profiles||[]).map(async(p,i)=>{
       const hist=await fetchFriendStats(p.id);
       const friendCustomEx=p.custom_exercises&&typeof p.custom_exercises==="object"?p.custom_exercises:{};
+      Object.assign(allFriendCustomEx,friendCustomEx);
       console.log("[Friends]",p.username,"custom exercises:",Object.keys(friendCustomEx),"history entries:",hist.length);
       return{id:p.id,name:p.username||"Friend",history:hist,customExercises:friendCustomEx,color:FRIEND_COLORS[i%FRIEND_COLORS.length]};
     }));
+    // Merge all friends' custom exercises into local DB (without overwriting local ones)
+    if(Object.keys(allFriendCustomEx).length>0){
+      setCustomExercises(prev=>{const merged={...allFriendCustomEx,...prev};const changed=Object.keys(merged).length!==Object.keys(prev).length;return changed?merged:prev;});
+    }
     setFriends(friendsList);
   }catch(e){/* offline */}setFriendsLoading(false);},[user]);
   useEffect(()=>{loadFriends();},[loadFriends]);
