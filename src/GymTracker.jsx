@@ -167,7 +167,7 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{loadFriends();},[loadFriends]);
 
   // Sync performance stats on mount
-  useEffect(()=>{if(user&&history.length)syncPerformanceStats(user.id,history,{...EXERCISE_DB,...customExercises});},[user,history.length]);
+  useEffect(()=>{console.log("[Sync trigger] user:",!!user,"history:",history.length);if(user&&history.length)syncPerformanceStats(user.id,history,{...EXERCISE_DB,...customExercises}).then(()=>console.log("[Sync] done")).catch(e=>console.error("[Sync] error:",e));},[user,history.length]);
   // Sync custom exercises to Supabase
   useEffect(()=>{if(user&&Object.keys(customExercises).length>0)syncCustomExercises(user.id,customExercises);},[user,customExercises]);
 

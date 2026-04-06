@@ -13,7 +13,7 @@ export async function syncPerformanceStats(userId, history, exerciseDb = {}) {
     const lastSync = localStorage.getItem(lastSyncKey) || "1970-01-01";
 
     const newEntries = history.filter(h => h.isoDate && h.isoDate >= lastSync);
-    if (!newEntries.length) return;
+    if (!newEntries.length) { console.log("[Sync] No new entries since", lastSync); return; }
 
     const rows = newEntries.map(h => ({
       user_id: userId,
@@ -29,9 +29,11 @@ export async function syncPerformanceStats(userId, history, exerciseDb = {}) {
 
     for (let i = 0; i < rows.length; i += 50) {
       const batch = rows.slice(i, i + 50);
+      console.log("[Sync] Upserting batch", i, "→", batch.length, "rows", batch[0]);
       const { error } = await supabase
         .from("performance_stats")
         .upsert(batch, { onConflict: "user_id,exercise_name,workout_date" });
+      console.log("[Sync] Result:", error ? error.message : "OK");
       if (error) {
         // Fallback: try without new columns if they don't exist yet
         if (error.message && (error.message.includes("column") || error.code === "42703")) {
