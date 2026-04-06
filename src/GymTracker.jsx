@@ -112,6 +112,7 @@ export default function GymTracker({ user, signOut }){
   const [customExercises,setCustomExercises]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_exercises"))||{};}catch{return {};}});
   const [editingRestEx,setEditingRestEx]=useState(null);
   const [editingRestVal,setEditingRestVal]=useState("");
+  const [editingMuscleEx,setEditingMuscleEx]=useState(null);
   const [progressMuscleFilter,setProgressMuscleFilter]=useState("All");
   const [favoriteExercises,setFavoriteExercises]=useState(()=>{try{const s=localStorage.getItem("gt_favorites");return s?new Set(JSON.parse(s)):new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}catch{return new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}});
   const [progressView,setProgressView]=useState("favorites");
@@ -230,6 +231,8 @@ export default function GymTracker({ user, signOut }){
   // Swap exercise in active workout
   const swapExercise=(exIdx,newEx)=>{if(selSplitIdx===null)return;const u=[...programs];const ns=[...prog.splits];const ne=[...ns[selSplitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[selSplitIdx]={...ns[selSplitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setSwappingExIdx(null);setSwapSearch("");};
   const saveRestTime=(exName,secs)=>{if(secs>0)setCustomRestTimes(p=>({...p,[exName]:secs}));setEditingRestEx(null);setEditingRestVal("");};
+  const changeExMuscle=(exName,newMuscle)=>{setCustomExercises(prev=>({...prev,[exName]:{...(prev[exName]||fullExDB[exName]||{rest:90}),muscle:newMuscle}}));setEditingMuscleEx(null);};
+  const deleteCustomEx=(exName)=>{setCustomExercises(prev=>{const next={...prev};delete next[exName];return next;});setFavoriteExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
   const toggleFavorite=(exName)=>{setFavoriteExercises(prev=>{const next=new Set(prev);if(next.has(exName))next.delete(exName);else next.add(exName);return next;});};
 
   const startEditHistory=(entries)=>{setEditingHistory(entries.map(h=>({...h})));};
@@ -635,20 +638,34 @@ export default function GymTracker({ user, signOut }){
               {MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setDbMuscleFilter(m)} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:dbMuscleFilter===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:dbMuscleFilter===m?`${MC[m]}20`:"transparent",color:dbMuscleFilter===m?MC[m]:t.textMuted}}>{m}</button>)}
             </div>
             <div style={{...card,overflow:"hidden"}}>
-              {EXERCISE_LIST.filter(e=>dbMuscleFilter==="All"||e.muscle===dbMuscleFilter).map((ex,i)=><div key={ex.name} style={{padding:"8px 12px",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
+              {EXERCISE_LIST.filter(e=>dbMuscleFilter==="All"||e.muscle===dbMuscleFilter).map((ex,i)=>{const isCustom=!!customExercises[ex.name];const isEditingMuscle=editingMuscleEx===ex.name;return(
+                <div key={ex.name} style={{padding:"10px 12px",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <button onClick={()=>toggleFavorite(ex.name)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:14,color:favoriteExercises.has(ex.name)?t.yellow:t.textFaint,lineHeight:1}} title={favoriteExercises.has(ex.name)?"Remove from favorites":"Add to favorites"}>{favoriteExercises.has(ex.name)?"★":"☆"}</button>
-                    <div><div style={{fontSize:12,fontWeight:600,color:t.text}}>{ex.name}</div><span style={{fontSize:9,color:MC[ex.muscle],fontWeight:600}}>{ex.muscle}</span></div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+                    <button onClick={()=>toggleFavorite(ex.name)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px",fontSize:16,color:favoriteExercises.has(ex.name)?t.yellow:t.textFaint,lineHeight:1,flexShrink:0}} title={favoriteExercises.has(ex.name)?"Remove from favorites":"Add to favorites"}>{favoriteExercises.has(ex.name)?"★":"☆"}</button>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:t.text,display:"flex",alignItems:"center",gap:4}}><span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ex.name}</span>{isCustom&&<span style={{fontSize:7,color:t.accent,fontWeight:700,background:t.accentBg,padding:"1px 4px",borderRadius:4,flexShrink:0}}>CUSTOM</span>}</div>
+                      <button onClick={()=>{if(isEditingMuscle)setEditingMuscleEx(null);else{setEditingMuscleEx(ex.name);setEditingRestEx(null);}}} style={{background:"none",border:"none",cursor:"pointer",padding:0,marginTop:1}}>
+                        <span style={{fontSize:10,color:MC[ex.muscle],fontWeight:600}}>{ex.muscle}</span>
+                        <span style={{fontSize:8,color:t.textFaint,marginLeft:3}}>✎</span>
+                      </button>
+                    </div>
                   </div>
-                  {editingRestEx===ex.name?<div style={{display:"flex",gap:4,alignItems:"center"}}>
-                    <input value={editingRestVal} onChange={e=>setEditingRestVal(e.target.value.replace(/\D/g,""))} placeholder="sec" autoFocus style={{width:50,padding:"4px 6px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",boxSizing:"border-box"}}/>
-                    <span style={{fontSize:8,color:t.textFaint}}>sec</span>
-                    <button onClick={()=>saveRestTime(ex.name,parseInt(editingRestVal)||ex.rest)} style={{padding:"3px 8px",borderRadius:5,border:"none",background:t.green,color:"#fff",fontWeight:700,fontSize:9,cursor:"pointer"}}>Save</button>
-                    <button onClick={()=>{setEditingRestEx(null);setEditingRestVal("");}} style={{padding:"3px 6px",borderRadius:5,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:9,cursor:"pointer"}}>×</button>
-                  </div>:<button onClick={()=>{setEditingRestEx(ex.name);setEditingRestVal(String(ex.rest));}} style={{fontSize:10,color:t.textMuted,fontWeight:600,background:t.surfaceAlt,padding:"3px 8px",borderRadius:6,border:"none",cursor:"pointer"}}>Rest: {fc(ex.rest)}</button>}
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    {editingRestEx===ex.name?<div style={{display:"flex",gap:4,alignItems:"center"}}>
+                      <input inputMode="numeric" value={editingRestVal} onChange={e=>setEditingRestVal(e.target.value.replace(/\D/g,""))} placeholder="sec" autoFocus style={{width:50,padding:"6px 6px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",boxSizing:"border-box"}}/>
+                      <span style={{fontSize:9,color:t.textFaint}}>sec</span>
+                      <button onClick={()=>saveRestTime(ex.name,parseInt(editingRestVal)||ex.rest)} style={{padding:"5px 10px",borderRadius:6,border:"none",background:t.green,color:"#fff",fontWeight:700,fontSize:10,cursor:"pointer"}}>Save</button>
+                      <button onClick={()=>{setEditingRestEx(null);setEditingRestVal("");}} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:10,cursor:"pointer"}}>×</button>
+                    </div>:<button onClick={()=>{setEditingRestEx(ex.name);setEditingRestVal(String(ex.rest));setEditingMuscleEx(null);}} style={{fontSize:11,color:t.textMuted,fontWeight:600,background:t.surfaceAlt,padding:"5px 10px",borderRadius:6,border:"none",cursor:"pointer"}}>Rest: {fc(ex.rest)}</button>}
+                    {isCustom&&<button onClick={()=>deleteCustomEx(ex.name)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:16,padding:"4px 4px",lineHeight:1}} title="Delete exercise">×</button>}
+                  </div>
                 </div>
-              </div>)}
+                {isEditingMuscle&&<div style={{marginTop:6,padding:8,background:t.bg,borderRadius:8}}>
+                  <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:6}}>CHANGE MUSCLE GROUP</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>changeExMuscle(ex.name,m)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,fontWeight:600,cursor:"pointer",border:ex.muscle===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:ex.muscle===m?`${MC[m]}20`:"transparent",color:ex.muscle===m?MC[m]:t.textMuted}}>{m}</button>)}</div>
+                </div>}
+              </div>);})}
             </div>
             <div style={{fontSize:9,color:t.textFaint,marginTop:6,textAlign:"center"}}>{EXERCISE_LIST.filter(e=>dbMuscleFilter==="All"||e.muscle===dbMuscleFilter).length} exercises · Tap rest time to edit · Shared database syncs with friends</div>
           </div>
