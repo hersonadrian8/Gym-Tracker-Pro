@@ -113,6 +113,8 @@ export default function GymTracker({ user, signOut }){
   const [editingRestEx,setEditingRestEx]=useState(null);
   const [editingRestVal,setEditingRestVal]=useState("");
   const [editingMuscleEx,setEditingMuscleEx]=useState(null);
+  const [editingDb,setEditingDb]=useState(false);
+  const [hiddenExercises,setHiddenExercises]=useState(()=>{try{const s=localStorage.getItem("gt_hidden_exercises");return s?new Set(JSON.parse(s)):new Set();}catch{return new Set();}});
   const [progressMuscleFilter,setProgressMuscleFilter]=useState("All");
   const [favoriteExercises,setFavoriteExercises]=useState(()=>{try{const s=localStorage.getItem("gt_favorites");return s?new Set(JSON.parse(s)):new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}catch{return new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}});
   const [progressView,setProgressView]=useState("favorites");
@@ -175,9 +177,10 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{localStorage.setItem("gt_custom_exercises",JSON.stringify(customExercises));},[customExercises]);
   useEffect(()=>{localStorage.setItem("gt_favorites",JSON.stringify([...favoriteExercises]));},[favoriteExercises]);
   useEffect(()=>{localStorage.setItem("gt_friend_info_dismissed",String(friendInfoDismissed));},[friendInfoDismissed]);
+  useEffect(()=>{localStorage.setItem("gt_hidden_exercises",JSON.stringify([...hiddenExercises]));},[hiddenExercises]);
   const fullExDB={...EXERCISE_DB,...customExercises};
-  const getExRest=(name)=>customRestTimes[name]??exercises.find(e=>e.name===name)?.rest??fullExDB[name]?.rest??90;
-  const EXERCISE_LIST=Object.entries(fullExDB).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest})).sort((a,b)=>{const mi=MUSCLE_GROUPS.indexOf(a.muscle),mj=MUSCLE_GROUPS.indexOf(b.muscle);if(mi!==mj)return(mi===-1?99:mi)-(mj===-1?99:mj);return a.name.localeCompare(b.name);});
+  const getExRest=(name)=>customRestTimes[name]??(isUnplanned?unplannedExercises:exercises).find(e=>e.name===name)?.rest??fullExDB[name]?.rest??90;
+  const EXERCISE_LIST=Object.entries(fullExDB).filter(([name])=>!hiddenExercises.has(name)).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest})).sort((a,b)=>{const mi=MUSCLE_GROUPS.indexOf(a.muscle),mj=MUSCLE_GROUPS.indexOf(b.muscle);if(mi!==mj)return(mi===-1?99:mi)-(mj===-1?99:mj);return a.name.localeCompare(b.name);});
 
   const prog=programs[selProgIdx];const split=selSplitIdx!==null?prog?.splits[selSplitIdx]:null;const exercises=split?.exercises||[];const allLoggedEx=[...new Set(history.map(h=>h.exercise))].sort();
   const allDbExNames=Object.keys(fullExDB);
@@ -205,7 +208,7 @@ export default function GymTracker({ user, signOut }){
     if(f==="weight"&&si>0&&sub===undefined)setManuallyEdited(t=>({...t,[`${ex}__${si}`]:true}));
     setWorkoutLog(l=>({...l,[gk(ex,si,sub)]:{...(l[gk(ex,si,sub)]||{weight:"",reps:""}),[f]:v}}));
   };
-  const getSC=(ex)=>setCounts[ex]||exercises.find(e=>e.name===ex)?.sets||3;const addSC=(ex)=>setSetCounts(s=>({...s,[ex]:(s[ex]||3)+1}));const remSC=(ex)=>{const c=getSC(ex);if(c<=1)return;setSetCounts(s=>({...s,[ex]:c-1}));};
+  const getSC=(ex)=>setCounts[ex]||(isUnplanned?unplannedExercises:exercises).find(e=>e.name===ex)?.sets||3;const addSC=(ex)=>setSetCounts(s=>({...s,[ex]:(s[ex]||3)+1}));const remSC=(ex)=>{const c=getSC(ex);if(c<=1)return;setSetCounts(s=>({...s,[ex]:c-1}));};
   const getLastSession=(exName)=>{const e=history.filter(h=>h.exercise===exName);if(!e.length)return null;return[...e].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"))[0];};
 
   // Rest timer (counts past 0 into overtime)
@@ -216,13 +219,22 @@ export default function GymTracker({ user, signOut }){
   // Session timer
   useEffect(()=>{if(logPhase==="active"&&workoutStart){const id=setInterval(()=>{setSessionElapsed(Math.floor((Date.now()-workoutStart)/1000));},1000);return()=>clearInterval(id);}else{setSessionElapsed(0);}},[logPhase,workoutStart]);
 
-  const startWorkout=(pIdx,sIdx)=>{const pi=pIdx!==undefined?pIdx:selProgIdx;const si=sIdx!==undefined?sIdx:selSplitIdx;if(si===null)return;setSelProgIdx(pi);setSelSplitIdx(si);setLogPhase("active");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setWorkoutStart(Date.now());};
-  const cancelWorkout=()=>{setLogPhase("home");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setSelSplitIdx(null);setWorkoutStart(null);stopR();};
+  const [unplannedExercises,setUnplannedExercises]=useState([]);
+  const [showAddWorkoutEx,setShowAddWorkoutEx]=useState(false);
+  const [workoutExSearch,setWorkoutExSearch]=useState("");
+  const isUnplanned=logPhase==="active"&&selSplitIdx===null;
+  const activeExercises=isUnplanned?unplannedExercises:exercises;
+  const startWorkout=(pIdx,sIdx)=>{const pi=pIdx!==undefined?pIdx:selProgIdx;const si=sIdx!==undefined?sIdx:selSplitIdx;if(si===null)return;setSelProgIdx(pi);setSelSplitIdx(si);setLogPhase("active");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setWorkoutStart(Date.now());setUnplannedExercises([]);};
+  const startUnplanned=()=>{setLogPhase("active");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setWorkoutStart(Date.now());setSelSplitIdx(null);setUnplannedExercises([]);};
+  const addWorkoutExercise=(ex)=>{setUnplannedExercises(prev=>[...prev,{name:ex.name,muscle:ex.muscle,sets:3,rest:ex.rest||90}]);setShowAddWorkoutEx(false);setWorkoutExSearch("");};
+  const removeWorkoutExercise=(idx)=>{setUnplannedExercises(prev=>prev.filter((_,i)=>i!==idx));};
+  const cancelWorkout=()=>{setLogPhase("home");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();};
   const finishWorkout=()=>{const now=new Date();const d=now.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=now.toISOString().split("T")[0];const entries=[];
-    exercises.forEach(ex=>{const c=getSC(ex.name);let maxW=0,tR=0,valid=0;const setDetails=[];
+    const exList=isUnplanned?unplannedExercises:exercises;const pName=isUnplanned?"Freestyle":prog.name;const sName=isUnplanned?"Unplanned":split.name;
+    exList.forEach(ex=>{const c=getSC(ex.name);let maxW=0,tR=0,valid=0;const setDetails=[];
       for(let i=0;i<c;i++){const tp=getType(ex.name,i);if(tp==="D"){const drops=[];for(let dd=0;dd<3;dd++){const s=getS(ex.name,i,dd);const w=parseFloat(s.weight),r=parseInt(s.reps);if(w>0){drops.push({weight:w,reps:r||0});if(w>maxW)maxW=w;if(r>0){tR+=r;valid++;}}}if(drops.length>0)setDetails.push({type:"D",drops});}else{const wVal=getEffectiveWeight(ex.name,i);const s=getS(ex.name,i);const w=parseFloat(wVal),r=parseInt(s.reps);if(w>0&&r>0){if(w>maxW)maxW=w;tR+=r;valid++;setDetails.push({type:tp,weight:w,reps:r});}}}
-      if(valid>0)entries.push({exercise:ex.name,date:d,isoDate:iso,weight:maxW,reps:Math.round(tR/valid),sets:valid,program:prog.name,split:split.name,setDetails});});
-    if(entries.length>0){const topLift=[...entries].sort((a,b)=>b.weight-a.weight)[0];const elapsed=workoutStart?Math.floor((Date.now()-workoutStart)/1000):0;setWorkoutSummary({split:split.name,program:prog.name,entries,topLift,date:d,duration:elapsed});setHistory(h=>{const next=[...h,...entries];if(user)syncPerformanceStats(user.id,next);return next;});setWorkoutLog({});setSetCounts({});setManuallyEdited({});setLogPhase("home");setSelSplitIdx(null);setWorkoutStart(null);stopR();}};
+      if(valid>0)entries.push({exercise:ex.name,date:d,isoDate:iso,weight:maxW,reps:Math.round(tR/valid),sets:valid,program:pName,split:sName,setDetails});});
+    if(entries.length>0){const topLift=[...entries].sort((a,b)=>b.weight-a.weight)[0];const elapsed=workoutStart?Math.floor((Date.now()-workoutStart)/1000):0;setWorkoutSummary({split:sName,program:pName,entries,topLift,date:d,duration:elapsed});setHistory(h=>{const next=[...h,...entries];if(user)syncPerformanceStats(user.id,next);return next;});setWorkoutLog({});setSetCounts({});setManuallyEdited({});setLogPhase("home");setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();}};
 
   const confirmSet=(exName,exIdx,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>({...p,[key]:true}));startR(getExRest(exName),exIdx,setIdx);};
   const isSetConfirmed=(exName,setIdx)=>!!confirmedSets[`${exName}__${setIdx}`];
@@ -232,7 +244,8 @@ export default function GymTracker({ user, signOut }){
   const swapExercise=(exIdx,newEx)=>{if(selSplitIdx===null)return;const u=[...programs];const ns=[...prog.splits];const ne=[...ns[selSplitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[selSplitIdx]={...ns[selSplitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setSwappingExIdx(null);setSwapSearch("");};
   const saveRestTime=(exName,secs)=>{if(secs>0)setCustomRestTimes(p=>({...p,[exName]:secs}));setEditingRestEx(null);setEditingRestVal("");};
   const changeExMuscle=(exName,newMuscle)=>{setCustomExercises(prev=>({...prev,[exName]:{...(prev[exName]||fullExDB[exName]||{rest:90}),muscle:newMuscle}}));setEditingMuscleEx(null);};
-  const deleteCustomEx=(exName)=>{setCustomExercises(prev=>{const next={...prev};delete next[exName];return next;});setFavoriteExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
+  const deleteExercise=(exName)=>{if(customExercises[exName]){setCustomExercises(prev=>{const next={...prev};delete next[exName];return next;});}else{setHiddenExercises(prev=>{const next=new Set(prev);next.add(exName);return next;});}setFavoriteExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
+  const restoreExercise=(exName)=>{setHiddenExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
   const toggleFavorite=(exName)=>{setFavoriteExercises(prev=>{const next=new Set(prev);if(next.has(exName))next.delete(exName);else next.add(exName);return next;});};
 
   const startEditHistory=(entries)=>{setEditingHistory(entries.map(h=>({...h})));};
@@ -294,7 +307,7 @@ export default function GymTracker({ user, signOut }){
         <div style={{maxWidth:480,margin:"0 auto"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:rActive?t.orange:logPhase==="active"?t.accent:t.green,boxShadow:`0 0 6px ${rActive?t.orange+"66":logPhase==="active"?t.accent+"66":t.green+"66"}`}}/>
-            <span style={{fontSize:10,fontWeight:600,letterSpacing:1.5,color:t.textMuted,textTransform:"uppercase"}}>{rActive?`Rest — ${fcSigned(rSecs)}`:logPhase==="active"?`${prog?.name} — ${split?.name}`:"Gym Tracker"}</span>
+            <span style={{fontSize:10,fontWeight:600,letterSpacing:1.5,color:t.textMuted,textTransform:"uppercase"}}>{rActive?`Rest — ${fcSigned(rSecs)}`:logPhase==="active"?(isUnplanned?"Freestyle — Unplanned":`${prog?.name} — ${split?.name}`):"Gym Tracker"}</span>
           </div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <h1 style={{fontSize:22,fontWeight:700,margin:"4px 0 0",color:t.text}}>{profileName||"Gym Tracker"}</h1>
@@ -352,7 +365,8 @@ export default function GymTracker({ user, signOut }){
             </div>}
 
             {/* Start */}
-            {!editing&&selSplitIdx!==null&&<button onClick={()=>startWorkout()} style={{width:"100%",padding:14,borderRadius:12,border:"none",background:t.startGrad,color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer",marginBottom:16}}>Start {split?.name} Workout</button>}
+            {!editing&&selSplitIdx!==null&&<button onClick={()=>startWorkout()} style={{width:"100%",padding:14,borderRadius:12,border:"none",background:t.startGrad,color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer",marginBottom:8}}>Start {split?.name} Workout</button>}
+            {!editing&&<button onClick={startUnplanned} style={{width:"100%",padding:12,borderRadius:12,border:`1px solid ${t.orange}40`,background:t.orangeBg,color:t.orange,fontWeight:700,fontSize:13,cursor:"pointer",marginBottom:16}}>⚡ Unplanned Workout</button>}
 
             {/* Edit panel */}
             {editing&&prog&&<div style={{marginBottom:14}}>
@@ -467,17 +481,17 @@ export default function GymTracker({ user, signOut }){
         {/* ===== ACTIVE WORKOUT ===== */}
         {tab==="log"&&logPhase==="active"&&<div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-            <div style={{fontSize:12,fontWeight:700,color:t.text}}>{prog?.name} — {split?.name}</div>
+            <div style={{fontSize:12,fontWeight:700,color:t.text}}>{isUnplanned?"Freestyle — Unplanned":`${prog?.name} — ${split?.name}`}</div>
             <button onClick={cancelWorkout} style={{background:"none",border:"none",color:t.red,fontSize:10,fontWeight:600,cursor:"pointer"}}>Cancel</button>
           </div>
           {/* Session timer */}
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12,padding:"6px 10px",background:t.surface,borderRadius:8,border:`1px solid ${t.border}`}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background:t.green,boxShadow:`0 0 4px ${t.green}66`}}/>
+            <div style={{width:6,height:6,borderRadius:"50%",background:isUnplanned?t.orange:t.green,boxShadow:`0 0 4px ${isUnplanned?t.orange:t.green}66`}}/>
             <span style={{fontSize:10,color:t.textMuted,fontWeight:600}}>SESSION</span>
             <span style={{fontSize:14,fontWeight:800,color:t.text,fontVariantNumeric:"tabular-nums"}}>{fc(sessionElapsed)}</span>
-            <span style={{fontSize:9,color:t.textFaint,marginLeft:"auto"}}>{exercises.length} exercises</span>
+            <span style={{fontSize:9,color:t.textFaint,marginLeft:"auto"}}>{activeExercises.length} exercises</span>
           </div>
-          {exercises.map((ex,exIdx)=>{const mc=MC[ex.muscle]||t.textSec;const count=getSC(ex.name);const lastTime=getLastSession(ex.name);const restTime=getExRest(ex.name);return(
+          {activeExercises.map((ex,exIdx)=>{const mc=MC[ex.muscle]||t.textSec;const count=getSC(ex.name);const lastTime=getLastSession(ex.name);const restTime=getExRest(ex.name);return(
             <div key={`${ex.name}-${exIdx}`}>
               <div style={{...cardWithLeft(mc),marginBottom:0,overflow:"hidden"}}>
                 <div style={{padding:"10px 12px"}}>
@@ -526,13 +540,23 @@ export default function GymTracker({ user, signOut }){
               <div style={{height:8}}/>
             </div>);
           })}
+          {/* Add exercise button (always for unplanned, or as extra for planned) */}
+          {!showAddWorkoutEx?<button onClick={()=>{setShowAddWorkoutEx(true);setWorkoutExSearch("");}} style={{width:"100%",padding:12,borderRadius:10,border:`2px dashed ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:13,cursor:"pointer",marginTop:4,marginBottom:4}}>+ Add Exercise</button>:
+          <div style={{...card,padding:12,marginTop:4,marginBottom:4}}>
+            <div style={{fontSize:10,color:t.textMuted,fontWeight:600,marginBottom:6}}>ADD EXERCISE</div>
+            <input value={workoutExSearch} onChange={e=>setWorkoutExSearch(e.target.value)} placeholder="Search exercises..." autoFocus style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:14,outline:"none",marginBottom:6,boxSizing:"border-box"}}/>
+            <div style={{maxHeight:200,overflowY:"auto",marginBottom:6}}>
+              {EXERCISE_LIST.filter(e=>workoutExSearch.trim()?e.name.toLowerCase().includes(workoutExSearch.toLowerCase()):true).slice(0,12).map(e=><button key={e.name} onClick={()=>addWorkoutExercise(e)} style={{width:"100%",padding:"10px 10px",border:"none",borderBottom:`1px solid ${t.borderLight}`,background:t.surface,color:t.textDim,fontSize:13,textAlign:"left",cursor:"pointer",display:"flex",justifyContent:"space-between"}}><span>{e.name}</span><span style={{color:MC[e.muscle]||t.textSec,fontSize:10}}>{e.muscle} · {fc(e.rest)}</span></button>)}
+            </div>
+            <button onClick={()=>{setShowAddWorkoutEx(false);setWorkoutExSearch("");}} style={{width:"100%",padding:"8px 0",borderRadius:8,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:12,cursor:"pointer"}}>Cancel</button>
+          </div>}
           {hasLog&&<button onClick={()=>setShowFinishConfirm(true)} style={{width:"100%",padding:14,borderRadius:12,border:"none",background:t.finishGrad,color:"#fff",fontWeight:700,fontSize:15,cursor:"pointer",marginTop:4}}>✓ Finish Workout</button>}
 
           {/* Finish confirmation modal */}
           {showFinishConfirm&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={()=>setShowFinishConfirm(false)}>
             <div style={{background:t.surface,borderRadius:16,border:`1px solid ${t.border}`,padding:20,maxWidth:340,width:"100%"}} onClick={e=>e.stopPropagation()}>
               <div style={{fontSize:16,fontWeight:700,color:t.text,marginBottom:4}}>Finish Workout?</div>
-              <div style={{fontSize:12,color:t.textSec,marginBottom:16}}>Save your {split?.name} session or discard all logged data.</div>
+              <div style={{fontSize:12,color:t.textSec,marginBottom:16}}>Save your {isUnplanned?"unplanned":split?.name} session or discard all logged data.</div>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 <button onClick={()=>{setShowFinishConfirm(false);finishWorkout();}} style={{width:"100%",padding:12,borderRadius:10,border:"none",background:t.finishGrad,color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>Save Workout</button>
                 <button onClick={()=>{setShowFinishConfirm(false);cancelWorkout();}} style={{width:"100%",padding:12,borderRadius:10,border:`1px solid ${t.red}`,background:"transparent",color:t.red,fontWeight:700,fontSize:14,cursor:"pointer"}}>Discard Workout</button>
@@ -632,7 +656,10 @@ export default function GymTracker({ user, signOut }){
 
           {/* Exercise Database */}
           <div style={{marginTop:20}}>
-            <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Exercise Database</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Exercise Database</div>
+              <button onClick={()=>{setEditingDb(!editingDb);setEditingMuscleEx(null);setEditingRestEx(null);}} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${editingDb?t.green:t.border}`,background:editingDb?t.greenBg:"transparent",color:editingDb?t.green:t.textMuted,fontSize:10,fontWeight:600,cursor:"pointer"}}>{editingDb?"✓ Done":"✎ Edit"}</button>
+            </div>
             <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:10}}>
               <button onClick={()=>setDbMuscleFilter("All")} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:dbMuscleFilter==="All"?`1px solid ${t.accent}`:`1px solid ${t.border}`,background:dbMuscleFilter==="All"?t.accentBg:"transparent",color:dbMuscleFilter==="All"?t.accent:t.textMuted}}>All</button>
               {MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setDbMuscleFilter(m)} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:dbMuscleFilter===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:dbMuscleFilter===m?`${MC[m]}20`:"transparent",color:dbMuscleFilter===m?MC[m]:t.textMuted}}>{m}</button>)}
@@ -641,14 +668,15 @@ export default function GymTracker({ user, signOut }){
               {EXERCISE_LIST.filter(e=>dbMuscleFilter==="All"||e.muscle===dbMuscleFilter).map((ex,i)=>{const isCustom=!!customExercises[ex.name];const isEditingMuscle=editingMuscleEx===ex.name;return(
                 <div key={ex.name} style={{padding:"10px 12px",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  {editingDb&&<button onClick={()=>deleteExercise(ex.name)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:18,padding:"4px 6px 4px 0",lineHeight:1,flexShrink:0}} title="Remove exercise">−</button>}
                   <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-                    <button onClick={()=>toggleFavorite(ex.name)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px",fontSize:16,color:favoriteExercises.has(ex.name)?t.yellow:t.textFaint,lineHeight:1,flexShrink:0}} title={favoriteExercises.has(ex.name)?"Remove from favorites":"Add to favorites"}>{favoriteExercises.has(ex.name)?"★":"☆"}</button>
+                    {!editingDb&&<button onClick={()=>toggleFavorite(ex.name)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px",fontSize:16,color:favoriteExercises.has(ex.name)?t.yellow:t.textFaint,lineHeight:1,flexShrink:0}} title={favoriteExercises.has(ex.name)?"Remove from favorites":"Add to favorites"}>{favoriteExercises.has(ex.name)?"★":"☆"}</button>}
                     <div style={{minWidth:0,flex:1}}>
                       <div style={{fontSize:13,fontWeight:600,color:t.text,display:"flex",alignItems:"center",gap:4}}><span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ex.name}</span>{isCustom&&<span style={{fontSize:7,color:t.accent,fontWeight:700,background:t.accentBg,padding:"1px 4px",borderRadius:4,flexShrink:0}}>CUSTOM</span>}</div>
-                      <button onClick={()=>{if(isEditingMuscle)setEditingMuscleEx(null);else{setEditingMuscleEx(ex.name);setEditingRestEx(null);}}} style={{background:"none",border:"none",cursor:"pointer",padding:0,marginTop:1}}>
+                      {editingDb?<button onClick={()=>{if(isEditingMuscle)setEditingMuscleEx(null);else{setEditingMuscleEx(ex.name);setEditingRestEx(null);}}} style={{background:"none",border:"none",cursor:"pointer",padding:0,marginTop:1}}>
                         <span style={{fontSize:10,color:MC[ex.muscle],fontWeight:600}}>{ex.muscle}</span>
                         <span style={{fontSize:8,color:t.textFaint,marginLeft:3}}>✎</span>
-                      </button>
+                      </button>:<span style={{fontSize:10,color:MC[ex.muscle],fontWeight:600}}>{ex.muscle}</span>}
                     </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -658,16 +686,21 @@ export default function GymTracker({ user, signOut }){
                       <button onClick={()=>saveRestTime(ex.name,parseInt(editingRestVal)||ex.rest)} style={{padding:"5px 10px",borderRadius:6,border:"none",background:t.green,color:"#fff",fontWeight:700,fontSize:10,cursor:"pointer"}}>Save</button>
                       <button onClick={()=>{setEditingRestEx(null);setEditingRestVal("");}} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:10,cursor:"pointer"}}>×</button>
                     </div>:<button onClick={()=>{setEditingRestEx(ex.name);setEditingRestVal(String(ex.rest));setEditingMuscleEx(null);}} style={{fontSize:11,color:t.textMuted,fontWeight:600,background:t.surfaceAlt,padding:"5px 10px",borderRadius:6,border:"none",cursor:"pointer"}}>Rest: {fc(ex.rest)}</button>}
-                    {isCustom&&<button onClick={()=>deleteCustomEx(ex.name)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:16,padding:"4px 4px",lineHeight:1}} title="Delete exercise">×</button>}
                   </div>
                 </div>
-                {isEditingMuscle&&<div style={{marginTop:6,padding:8,background:t.bg,borderRadius:8}}>
+                {isEditingMuscle&&editingDb&&<div style={{marginTop:6,padding:8,background:t.bg,borderRadius:8}}>
                   <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:6}}>CHANGE MUSCLE GROUP</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>changeExMuscle(ex.name,m)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,fontWeight:600,cursor:"pointer",border:ex.muscle===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:ex.muscle===m?`${MC[m]}20`:"transparent",color:ex.muscle===m?MC[m]:t.textMuted}}>{m}</button>)}</div>
                 </div>}
               </div>);})}
             </div>
-            <div style={{fontSize:9,color:t.textFaint,marginTop:6,textAlign:"center"}}>{EXERCISE_LIST.filter(e=>dbMuscleFilter==="All"||e.muscle===dbMuscleFilter).length} exercises · Tap rest time to edit · Shared database syncs with friends</div>
+            {hiddenExercises.size>0&&editingDb&&<div style={{marginTop:8}}>
+              <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:4}}>REMOVED EXERCISES ({hiddenExercises.size})</div>
+              <div style={{...card,padding:8,display:"flex",gap:4,flexWrap:"wrap"}}>
+                {[...hiddenExercises].sort().map(name=><button key={name} onClick={()=>restoreExercise(name)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontSize:10,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}><span style={{color:t.green,fontWeight:700}}>+</span> {name}</button>)}
+              </div>
+            </div>}
+            <div style={{fontSize:9,color:t.textFaint,marginTop:6,textAlign:"center"}}>{EXERCISE_LIST.filter(e=>dbMuscleFilter==="All"||e.muscle===dbMuscleFilter).length} exercises{editingDb?" · Tap − to remove · Tap muscle to reassign":" · Tap rest time to edit"}</div>
           </div>
         </div>}
 
