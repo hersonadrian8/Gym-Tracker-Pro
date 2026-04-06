@@ -9,6 +9,9 @@ const STL = { S:{label:"S",full:"Standard",color:"#818cf8"}, D:{label:"D",full:"
 const PROGRAM_COLORS = { "Push / Pull / Legs":"#818cf8", "Upper / Lower":"#10b981", "Bro Split":"#f59e0b" };
 const getProgColor = (name) => PROGRAM_COLORS[name] || "#818cf8";
 
+const CARDIO_DB = ["Running","Walking","Cycling","Swimming","Rowing","Elliptical","Stair Climber","Jump Rope","Hiking","Sprints","HIIT","Treadmill","Stationary Bike","Skiing","Boxing"];
+const CARDIO_COLOR = "#06b6d4";
+
 const EXERCISE_DB = {
   "Bench Press":{muscle:"Chest",rest:120},"Incline Bench Press":{muscle:"Chest",rest:120},"Dumbbell Bench Press":{muscle:"Chest",rest:90},
   "Incline Dumbbell Press":{muscle:"Chest",rest:90},"Cable Flyes":{muscle:"Chest",rest:60},"Chest Dips":{muscle:"Chest",rest:90},
@@ -139,6 +142,17 @@ export default function GymTracker({ user, signOut }){
   const [importSelected,setImportSelected]=useState(new Set());
   const [importError,setImportError]=useState("");
   const importRef=useRef(null);
+  // Cardio
+  const [cardioHistory,setCardioHistory]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_cardio_history"))||[];}catch{return [];}});
+  const [customCardio,setCustomCardio]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_cardio"))||[];}catch{return [];}});
+  const [showCardioLog,setShowCardioLog]=useState(false);
+  const [cardioType,setCardioType]=useState("");
+  const [cardioDistance,setCardioDistance]=useState("");
+  const [cardioDistUnit,setCardioDistUnit]=useState("mi");
+  const [cardioTime,setCardioTime]=useState("");
+  const [cardioSearch,setCardioSearch]=useState("");
+  const [cardioProgressType,setCardioProgressType]=useState("");
+  const [cardioProgressMetric,setCardioProgressMetric]=useState("distance");
 
   // Theme
   useEffect(()=>{const mq=window.matchMedia("(prefers-color-scheme: dark)");const h=(e)=>setSystemDark(e.matches);mq.addEventListener("change",h);return()=>mq.removeEventListener("change",h);},[]);
@@ -149,17 +163,25 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{if(!user)return;(async()=>{try{
     const {data,error}=await supabase.from("profiles").select("username,friend_code,custom_exercises").eq("id",user.id).single();
     if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}if(data.custom_exercises&&typeof data.custom_exercises==="object"){setCustomExercises(prev=>({...data.custom_exercises,...prev}));}}
-    // Load full app data from cloud
+    // Load full app data from cloud — only applies on fresh device (no local data)
     const cloud=await fetchAppData(user.id);
     if(cloud){
-      if(cloud.programs)setPrograms(cloud.programs);
-      if(cloud.history&&cloud.history.length)setHistory(prev=>{const merged=[...prev];cloud.history.forEach(ch=>{if(!merged.find(h=>h.exercise===ch.exercise&&h.isoDate===ch.isoDate&&h.split===ch.split))merged.push(ch);});return merged;});
-      if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(cloud.primaryProgIdx);
-      if(cloud.appearance)setAppearance(cloud.appearance);
-      if(cloud.customRestTimes)setCustomRestTimes(cloud.customRestTimes);
-      if(cloud.favoriteExercises)setFavoriteExercises(new Set(cloud.favoriteExercises));
-      if(cloud.hiddenExercises)setHiddenExercises(new Set(cloud.hiddenExercises));
-      console.log("[AppSync] Loaded from cloud");
+      const hasLocal=!!localStorage.getItem("gt_history")||!!localStorage.getItem("gt_programs");
+      if(!hasLocal){
+        // Fresh device: use cloud data entirely
+        if(cloud.programs)setPrograms(cloud.programs);
+        if(cloud.history)setHistory(cloud.history);
+        if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(cloud.primaryProgIdx);
+        if(cloud.appearance)setAppearance(cloud.appearance);
+        if(cloud.customRestTimes)setCustomRestTimes(cloud.customRestTimes);
+        if(cloud.favoriteExercises)setFavoriteExercises(new Set(cloud.favoriteExercises));
+        if(cloud.hiddenExercises)setHiddenExercises(new Set(cloud.hiddenExercises));
+        if(cloud.cardioHistory)setCardioHistory(cloud.cardioHistory);
+        if(cloud.customCardio)setCustomCardio(cloud.customCardio);
+        console.log("[AppSync] Fresh device — loaded all from cloud");
+      } else {
+        console.log("[AppSync] Local data exists — cloud skipped (localStorage is source of truth)");
+      }
     }
     setCloudLoaded(true);
   }catch(e){console.warn("[AppSync] Load failed:",e.message);setCloudLoaded(true);}})();},[user]);
@@ -207,11 +229,13 @@ export default function GymTracker({ user, signOut }){
         customRestTimes,
         favoriteExercises:[...favoriteExercises],
         hiddenExercises:[...hiddenExercises],
+        cardioHistory,
+        customCardio,
       };
       syncAppData(user.id,appData);
     },2000);
     return()=>{if(syncTimerRef.current)clearTimeout(syncTimerRef.current);};
-  },[user,cloudLoaded,programs,history,primaryProgIdx,appearance,customRestTimes,favoriteExercises,hiddenExercises]);
+  },[user,cloudLoaded,programs,history,primaryProgIdx,appearance,customRestTimes,favoriteExercises,hiddenExercises,cardioHistory,customCardio]);
 
   // Persist state to localStorage
   useEffect(()=>{localStorage.setItem("gt_programs",JSON.stringify(programs));},[programs]);
@@ -223,6 +247,8 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{localStorage.setItem("gt_favorites",JSON.stringify([...favoriteExercises]));},[favoriteExercises]);
   useEffect(()=>{localStorage.setItem("gt_friend_info_dismissed",String(friendInfoDismissed));},[friendInfoDismissed]);
   useEffect(()=>{localStorage.setItem("gt_hidden_exercises",JSON.stringify([...hiddenExercises]));},[hiddenExercises]);
+  useEffect(()=>{localStorage.setItem("gt_cardio_history",JSON.stringify(cardioHistory));},[cardioHistory]);
+  useEffect(()=>{localStorage.setItem("gt_custom_cardio",JSON.stringify(customCardio));},[customCardio]);
   const fullExDB={...EXERCISE_DB,...customExercises};
   const getExRest=(name)=>customRestTimes[name]??(isUnplanned?unplannedExercises:exercises).find(e=>e.name===name)?.rest??fullExDB[name]?.rest??90;
   const EXERCISE_LIST=Object.entries(fullExDB).filter(([name])=>!hiddenExercises.has(name)).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest})).sort((a,b)=>{const mi=MUSCLE_GROUPS.indexOf(a.muscle),mj=MUSCLE_GROUPS.indexOf(b.muscle);if(mi!==mj)return(mi===-1?99:mi)-(mj===-1?99:mj);return a.name.localeCompare(b.name);});
@@ -256,10 +282,11 @@ export default function GymTracker({ user, signOut }){
   const getSC=(ex)=>setCounts[ex]||(isUnplanned?unplannedExercises:exercises).find(e=>e.name===ex)?.sets||3;const addSC=(ex)=>setSetCounts(s=>({...s,[ex]:(s[ex]||3)+1}));const remSC=(ex)=>{const c=getSC(ex);if(c<=1)return;setSetCounts(s=>({...s,[ex]:c-1}));};
   const getLastSession=(exName)=>{const e=history.filter(h=>h.exercise===exName);if(!e.length)return null;return[...e].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"))[0];};
 
-  // Rest timer (counts past 0 into overtime)
-  const startR=(s,exIdx,setIdx)=>{if(rRef.current)clearInterval(rRef.current);setRSecs(s);setRTotal(s);setRActive(true);setRAfterEx(exIdx);setRAfterSet(setIdx);};
-  const stopR=useCallback(()=>{if(rRef.current)clearInterval(rRef.current);setRActive(false);setRSecs(0);setRAfterEx(null);setRAfterSet(null);},[]);
-  useEffect(()=>{if(rActive){rRef.current=setInterval(()=>{setRSecs(p=>p-1);},1000);return()=>clearInterval(rRef.current);}},[rActive]);
+  // Rest timer — timestamp-based so it survives app backgrounding
+  const [rStartTime,setRStartTime]=useState(null);
+  const startR=(s,exIdx,setIdx)=>{if(rRef.current)clearInterval(rRef.current);setRTotal(s);setRStartTime(Date.now());setRActive(true);setRAfterEx(exIdx);setRAfterSet(setIdx);};
+  const stopR=useCallback(()=>{if(rRef.current)clearInterval(rRef.current);setRActive(false);setRSecs(0);setRTotal(0);setRStartTime(null);setRAfterEx(null);setRAfterSet(null);},[]);
+  useEffect(()=>{if(rActive&&rStartTime&&rTotal>0){const tick=()=>{const elapsed=Math.floor((Date.now()-rStartTime)/1000);setRSecs(rTotal-elapsed);};tick();rRef.current=setInterval(tick,1000);return()=>clearInterval(rRef.current);}},[rActive,rStartTime,rTotal]);
 
   // Session timer
   useEffect(()=>{if(logPhase==="active"&&workoutStart){const id=setInterval(()=>{setSessionElapsed(Math.floor((Date.now()-workoutStart)/1000));},1000);return()=>clearInterval(id);}else{setSessionElapsed(0);}},[logPhase,workoutStart]);
@@ -281,7 +308,8 @@ export default function GymTracker({ user, signOut }){
       if(valid>0)entries.push({exercise:ex.name,date:d,isoDate:iso,weight:maxW,reps:Math.round(tR/valid),sets:valid,program:pName,split:sName,setDetails});});
     if(entries.length>0){const topLift=[...entries].sort((a,b)=>b.weight-a.weight)[0];const elapsed=workoutStart?Math.floor((Date.now()-workoutStart)/1000):0;setWorkoutSummary({split:sName,program:pName,entries,topLift,date:d,duration:elapsed});setHistory(h=>{const next=[...h,...entries];if(user)syncPerformanceStats(user.id,next,fullExDB);return next;});setWorkoutLog({});setSetCounts({});setManuallyEdited({});setLogPhase("home");setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();}};
 
-  const confirmSet=(exName,exIdx,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>({...p,[key]:true}));startR(getExRest(exName),exIdx,setIdx);};
+  const confirmSet=(exName,exIdx,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>({...p,[key]:true}));stopR();setTimeout(()=>startR(getExRest(exName),exIdx,setIdx),50);};
+  const unconfirmSet=(exName,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>{const next={...p};delete next[key];return next;});if(rAfterSet===setIdx)stopR();};
   const isSetConfirmed=(exName,setIdx)=>!!confirmedSets[`${exName}__${setIdx}`];
   const hasLog=Object.values(workoutLog).some(s=>s.weight||s.reps);
 
@@ -293,9 +321,28 @@ export default function GymTracker({ user, signOut }){
   const restoreExercise=(exName)=>{setHiddenExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
   const toggleFavorite=(exName)=>{setFavoriteExercises(prev=>{const next=new Set(prev);if(next.has(exName))next.delete(exName);else next.add(exName);return next;});};
 
+  // Cardio functions
+  const allCardioTypes=[...new Set([...CARDIO_DB,...customCardio])].sort();
+  const saveCardioSession=()=>{
+    if(!cardioType.trim())return;
+    const now=new Date();const d=now.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=toLocalISO(now);
+    const dist=parseFloat(cardioDistance)||0;const mins=parseFloat(cardioTime)||0;
+    if(!dist&&!mins)return;
+    const entry={type:cardioType.trim(),date:d,isoDate:iso,distance:dist,unit:cardioDistUnit,time:mins,pace:dist>0&&mins>0?+(mins/dist).toFixed(2):0};
+    // Add to custom cardio DB if new
+    if(!CARDIO_DB.includes(cardioType.trim())&&!customCardio.includes(cardioType.trim())){setCustomCardio(prev=>[...prev,cardioType.trim()]);}
+    setCardioHistory(prev=>[...prev,entry]);
+    setShowCardioLog(false);setCardioType("");setCardioDistance("");setCardioTime("");setCardioSearch("");
+  };
+  const getCardioData=(type,metric)=>cardioHistory.filter(c=>c.type===type).map(c=>({date:c.date,value:metric==="distance"?c.distance:metric==="time"?c.time:c.pace,isoDate:c.isoDate}));
+  const getCardioBest=(type,metric)=>{const entries=cardioHistory.filter(c=>c.type===type&&c[metric]>0);if(!entries.length)return 0;return metric==="pace"?Math.min(...entries.map(e=>e.pace)):Math.max(...entries.map(e=>e[metric]));};
+  const getLastCardio=()=>{if(!cardioHistory.length)return null;const sorted=[...cardioHistory].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"));return sorted[0];};
+
   const startEditHistory=(entries)=>{setEditingHistory(entries.map(h=>({...h})));};
   const updateEditEntry=(idx,field,val)=>{setEditingHistory(prev=>prev.map((h,i)=>i===idx?{...h,[field]:field==="weight"?parseFloat(val)||0:field==="reps"||field==="sets"?parseInt(val)||0:val}:h));};
-  const saveEditHistory=()=>{if(!editingHistory)return;setHistory(prev=>{const updated=[...prev];editingHistory.forEach(edited=>{const idx=updated.findIndex(h=>h.exercise===edited._origExercise&&h.isoDate===edited.isoDate&&h.split===edited.split);if(idx!==-1)updated[idx]={...updated[idx],weight:edited.weight,reps:edited.reps,sets:edited.sets};});return updated;});setEditingHistory(null);};
+  const updateEditSetDetail=(entryIdx,setIdx,field,val)=>{setEditingHistory(prev=>prev.map((h,i)=>{if(i!==entryIdx||!h.setDetails)return h;const sd=[...h.setDetails];sd[setIdx]={...sd[setIdx],[field]:field==="weight"?parseFloat(val)||0:parseInt(val)||0};const maxW=Math.max(...sd.filter(s=>s.type!=="D").map(s=>s.weight||0),...sd.filter(s=>s.type==="D").flatMap(s=>(s.drops||[]).map(d=>d.weight||0)),0);const validSets=sd.filter(s=>s.type==="D"?(s.drops||[]).some(d=>d.weight>0):s.weight>0);const totalReps=sd.reduce((sum,s)=>s.type==="D"?sum:sum+(s.reps||0),0);return{...h,setDetails:sd,weight:maxW,sets:validSets.length,reps:validSets.length>0?Math.round(totalReps/validSets.filter(s=>s.type!=="D").length)||0:0};}));};
+  const deleteEditSetDetail=(entryIdx,setIdx)=>{setEditingHistory(prev=>prev.map((h,i)=>{if(i!==entryIdx||!h.setDetails)return h;const sd=h.setDetails.filter((_,j)=>j!==setIdx);if(sd.length===0)return h;const maxW=Math.max(...sd.filter(s=>s.type!=="D").map(s=>s.weight||0),0);const validSets=sd.filter(s=>s.type==="D"?(s.drops||[]).some(d=>d.weight>0):s.weight>0);const totalReps=sd.reduce((sum,s)=>s.type==="D"?sum:sum+(s.reps||0),0);return{...h,setDetails:sd,weight:maxW,sets:validSets.length,reps:validSets.length>0?Math.round(totalReps/validSets.filter(s=>s.type!=="D").length)||0:0};}));};
+  const saveEditHistory=()=>{if(!editingHistory)return;setHistory(prev=>{const updated=[...prev];editingHistory.forEach(edited=>{const idx=updated.findIndex(h=>h.exercise===edited._origExercise&&h.isoDate===edited.isoDate&&h.split===edited.split);if(idx!==-1)updated[idx]={...updated[idx],weight:edited.weight,reps:edited.reps,sets:edited.sets,setDetails:edited.setDetails};});return updated;});setEditingHistory(null);};
   const deleteHistoryEntry=(idx)=>{if(!editingHistory)return;const entry=editingHistory[idx];setHistory(prev=>prev.filter(h=>!(h.exercise===entry._origExercise&&h.isoDate===entry.isoDate&&h.split===entry.split)));setEditingHistory(prev=>{const next=prev.filter((_,i)=>i!==idx);if(next.length===0){setEditingHistory(null);setCalSelDay(null);}return next.length?next:prev;});if(editingHistory.length<=1){setEditingHistory(null);setCalSelDay(null);}};
   const getPR=(hist,ex)=>{const e=hist.filter(h=>h.exercise===ex);return e.length?Math.max(...e.map(x=>x.weight)):0;};
   const getCD=(hist,ex)=>hist.filter(h=>h.exercise===ex).map(h=>({date:h.date,weight:h.weight}));
@@ -309,7 +356,7 @@ export default function GymTracker({ user, signOut }){
   const primaryProg=programs[primaryProgIdx];
   const getNextSplit=()=>{if(!primaryProg||!primaryProg.splits.length)return null;const ph=history.filter(h=>h.program===primaryProg.name);if(!ph.length)return{splitIdx:0,splitName:primaryProg.splits[0].name};const maxDate=ph.reduce((m,h)=>(h.isoDate||"0")>m?(h.isoDate||"0"):m,"0");const lastDayEntries=ph.filter(h=>h.isoDate===maxDate);const lastSplit=lastDayEntries[lastDayEntries.length-1].split;const li=primaryProg.splits.findIndex(s=>s.name===lastSplit);return{splitIdx:(li+1)%primaryProg.splits.length,splitName:primaryProg.splits[(li+1)%primaryProg.splits.length].name};};
   const nextSplit=getNextSplit();
-  const getWeekDots=()=>{const sun=getSunday(new Date());const todayIso=toLocalISO(new Date());const dots=[];for(let i=0;i<7;i++){const dt=new Date(sun);dt.setDate(sun.getDate()+i);const iso=toLocalISO(dt);const de=history.filter(h=>h.isoDate===iso);dots.push({day:DOW[i],iso,worked:de.length>0,program:de.length>0?de[0].program:null,isToday:iso===todayIso,entries:de});}return dots;};
+  const getWeekDots=()=>{const sun=getSunday(new Date());const todayIso=toLocalISO(new Date());const dots=[];for(let i=0;i<7;i++){const dt=new Date(sun);dt.setDate(sun.getDate()+i);const iso=toLocalISO(dt);const de=history.filter(h=>h.isoDate===iso);const ce=cardioHistory.filter(c=>c.isoDate===iso);dots.push({day:DOW[i],iso,worked:de.length>0||ce.length>0,program:de.length>0?de[0].program:null,hasCardio:ce.length>0,isToday:iso===todayIso,entries:de,cardioEntries:ce});}return dots;};
   const weekDots=getWeekDots();
   const getRecentPRs=()=>{const tw=new Date();tw.setDate(tw.getDate()-14);const twi=toLocalISO(tw);const prs=[];[...new Set(history.map(h=>h.exercise))].forEach(ex=>{const all=history.filter(h=>h.exercise===ex);const recent=all.filter(h=>(h.isoDate||"9")>=twi);const older=all.filter(h=>(h.isoDate||"0")<twi);if(!recent.length)return;const rm=Math.max(...recent.map(h=>h.weight));const om=older.length?Math.max(...older.map(h=>h.weight)):0;if(rm>om&&om>0)prs.push({exercise:ex,weight:rm,prev:om,gain:rm-om,date:recent.find(h=>h.weight===rm)?.date});});return prs;};
   const recentPRs=getRecentPRs();
@@ -411,7 +458,47 @@ export default function GymTracker({ user, signOut }){
 
             {/* Start */}
             {!editing&&selSplitIdx!==null&&<button onClick={()=>startWorkout()} style={{width:"100%",padding:14,borderRadius:12,border:"none",background:t.startGrad,color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer",marginBottom:8}}>Start {split?.name} Workout</button>}
-            {!editing&&<button onClick={startUnplanned} style={{width:"100%",padding:12,borderRadius:12,border:`1px solid ${t.orange}40`,background:t.orangeBg,color:t.orange,fontWeight:700,fontSize:13,cursor:"pointer",marginBottom:16}}>⚡ Unplanned Workout</button>}
+            {!editing&&!showCardioLog&&<div style={{display:"flex",gap:8,marginBottom:16}}>
+              <button onClick={startUnplanned} style={{flex:"1 1 0",padding:12,borderRadius:12,border:`1px solid ${t.orange}40`,background:t.orangeBg,color:t.orange,fontWeight:700,fontSize:13,cursor:"pointer",minWidth:0}}>⚡ Unplanned</button>
+              <button onClick={()=>setShowCardioLog(true)} style={{flex:"1 1 0",padding:12,borderRadius:12,border:`1px solid ${CARDIO_COLOR}40`,background:`${CARDIO_COLOR}10`,color:CARDIO_COLOR,fontWeight:700,fontSize:13,cursor:"pointer",minWidth:0}}>🏃 Add Cardio</button>
+            </div>}
+
+            {/* Cardio Log — Inline Card */}
+            {showCardioLog&&<div style={{...card,padding:"14px 14px",marginBottom:16,border:`1px solid ${CARDIO_COLOR}30`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:14,fontWeight:700,color:t.text}}>🏃 Log Cardio</div>
+                <button onClick={()=>{setShowCardioLog(false);setCardioType("");setCardioDistance("");setCardioTime("");setCardioSearch("");}} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:16,padding:4}}>×</button>
+              </div>
+              {/* Type selector */}
+              <div style={{fontSize:9,color:t.textMuted,fontWeight:600,textTransform:"uppercase",marginBottom:4}}>Type</div>
+              <select value={cardioType} onChange={e=>setCardioType(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${cardioType?CARDIO_COLOR:t.border}`,background:cardioType?`${CARDIO_COLOR}10`:t.inputBg,color:cardioType?CARDIO_COLOR:t.textMuted,fontSize:13,fontWeight:600,outline:"none",marginBottom:6,boxSizing:"border-box",WebkitAppearance:"auto"}}>
+                <option value="">Select cardio type...</option>
+                {allCardioTypes.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+              <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:10}}>
+                <input value={cardioSearch} onChange={e=>setCardioSearch(e.target.value)} placeholder="Or type a custom activity..." style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+                {cardioSearch.trim()&&!allCardioTypes.some(c=>c.toLowerCase()===cardioSearch.toLowerCase())&&<button onClick={()=>{setCardioType(cardioSearch.trim());setCardioSearch("");}} style={{padding:"8px 12px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",border:`1px solid ${CARDIO_COLOR}`,background:`${CARDIO_COLOR}15`,color:CARDIO_COLOR,whiteSpace:"nowrap",flexShrink:0}}>+ Add</button>}
+              </div>
+              {/* Distance + Time inputs */}
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:3,textTransform:"uppercase"}}>Distance</div>
+                  <div style={{display:"flex",gap:4}}>
+                    <input value={cardioDistance} onChange={e=>setCardioDistance(e.target.value.replace(/[^\d.]/g,""))} inputMode="decimal" placeholder="0" style={{flex:1,padding:"10px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:18,fontWeight:700,outline:"none",textAlign:"center",boxSizing:"border-box"}}/>
+                    <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                      {["mi","km"].map(u=><button key={u} onClick={()=>setCardioDistUnit(u)} style={{padding:"4px 8px",borderRadius:4,border:cardioDistUnit===u?`1px solid ${CARDIO_COLOR}`:`1px solid ${t.border}`,background:cardioDistUnit===u?`${CARDIO_COLOR}20`:"transparent",color:cardioDistUnit===u?CARDIO_COLOR:t.textMuted,fontSize:10,fontWeight:600,cursor:"pointer"}}>{u}</button>)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:3,textTransform:"uppercase"}}>Time (min)</div>
+                  <input value={cardioTime} onChange={e=>setCardioTime(e.target.value.replace(/[^\d.]/g,""))} inputMode="decimal" placeholder="0" style={{width:"100%",padding:"10px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:18,fontWeight:700,outline:"none",textAlign:"center",boxSizing:"border-box"}}/>
+                </div>
+              </div>
+              {/* Pace preview */}
+              {cardioDistance&&cardioTime&&parseFloat(cardioDistance)>0&&parseFloat(cardioTime)>0&&<div style={{padding:"5px 10px",background:`${CARDIO_COLOR}10`,borderRadius:8,marginBottom:10,textAlign:"center"}}><span style={{fontSize:10,color:t.textMuted}}>Pace: </span><span style={{fontSize:13,fontWeight:700,color:CARDIO_COLOR}}>{(parseFloat(cardioTime)/parseFloat(cardioDistance)).toFixed(2)} min/{cardioDistUnit}</span></div>}
+              <button onClick={saveCardioSession} style={{width:"100%",padding:12,borderRadius:10,border:"none",background:`linear-gradient(135deg,${CARDIO_COLOR},${CARDIO_COLOR}cc)`,color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>Save Cardio</button>
+            </div>}
 
             {/* Edit panel */}
             {editing&&prog&&<div style={{marginBottom:14}}>
@@ -489,7 +576,7 @@ export default function GymTracker({ user, signOut }){
               <div style={{display:"flex",gap:2}}>{weekDots.map(d=>{const isSel=weekSelDay===d.iso;return(
                 <div key={d.day} style={{flex:1,textAlign:"center",cursor:"pointer",padding:"3px 0"}} onClick={()=>setWeekSelDay(isSel?null:d.iso)}>
                   <div style={{fontSize:9,color:d.isToday?t.text:t.textFaint,fontWeight:d.isToday?700:500,marginBottom:4}}>{d.day}</div>
-                  <div style={{width:24,height:24,borderRadius:"50%",margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"center",background:d.worked?getSplitColor(d.entries[0]?.split):(d.isToday?t.surfaceAlt:t.surface),border:isSel?`2px solid ${t.text}`:(d.isToday&&!d.worked?`2px solid ${t.textFaint}`:"2px solid transparent"),boxShadow:d.worked?`0 0 6px ${getSplitColor(d.entries[0]?.split)}40`:"none"}}>{d.worked&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}/>}</div>
+                  <div style={{width:24,height:24,borderRadius:"50%",margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"center",background:d.worked?(d.entries.length>0?getSplitColor(d.entries[0]?.split):CARDIO_COLOR):(d.isToday?t.surfaceAlt:t.surface),border:isSel?`2px solid ${t.text}`:(d.isToday&&!d.worked?`2px solid ${t.textFaint}`:"2px solid transparent"),boxShadow:d.worked?`0 0 6px ${(d.entries.length>0?getSplitColor(d.entries[0]?.split):CARDIO_COLOR)}40`:"none"}}>{d.worked&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}/>}</div>
                 </div>);
               })}</div>
             </div>}
@@ -498,9 +585,10 @@ export default function GymTracker({ user, signOut }){
             {!editing&&weekSelDay&&(()=>{const dd=weekDots.find(d=>d.iso===weekSelDay);if(!dd)return null;const dn=new Date(weekSelDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
               if(!dd.worked) return <div style={{...card,padding:"10px 12px",marginBottom:14,textAlign:"center"}}><div style={{fontSize:11,color:t.textFaint}}>{dn} — Rest day</div></div>;
               const bs={};dd.entries.forEach(h=>{const k=h.split||"W";if(!bs[k])bs[k]=[];bs[k].push(h);});
-              return <div style={{...cardWithTop(getSplitColor(dd.entries[0]?.split)),padding:"10px 14px",marginBottom:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div style={{fontSize:12,fontWeight:700,color:t.text}}>{dn}</div><div style={{fontSize:8,color:getProgColor(dd.program),fontWeight:600,background:`${getProgColor(dd.program)}15`,padding:"2px 6px",borderRadius:6}}>{dd.program}</div></div>
+              return <div style={{...cardWithTop(dd.entries.length>0?getSplitColor(dd.entries[0]?.split):CARDIO_COLOR),padding:"10px 14px",marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div style={{fontSize:12,fontWeight:700,color:t.text}}>{dn}</div>{dd.entries.length>0&&<div style={{fontSize:8,color:getProgColor(dd.program),fontWeight:600,background:`${getProgColor(dd.program)}15`,padding:"2px 6px",borderRadius:6}}>{dd.program}</div>}</div>
                 {Object.entries(bs).map(([sn,entries])=><div key={sn}><div style={{fontSize:9,fontWeight:700,color:t.green,marginBottom:2,textTransform:"uppercase"}}>{sn}</div>{entries.map((h,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><div style={{color:t.textSec}}>{h.exercise}{renderSetBadges(h.setDetails)}</div><div style={{display:"flex",gap:8}}><span style={{color:t.orange,fontWeight:600}}>{h.weight}lbs</span><span style={{color:t.textMuted}}>{h.sets}×{h.reps}</span></div></div>)}</div>)}
+                {dd.cardioEntries?.length>0&&<div style={{marginTop:dd.entries.length?6:0}}><div style={{fontSize:9,fontWeight:700,color:CARDIO_COLOR,marginBottom:2,textTransform:"uppercase"}}>🏃 Cardio</div>{dd.cardioEntries.map((c,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><span style={{color:t.textSec}}>{c.type}</span><div style={{display:"flex",gap:6}}>{c.distance>0&&<span style={{color:CARDIO_COLOR,fontWeight:600}}>{c.distance}{c.unit}</span>}{c.time>0&&<span style={{color:t.textMuted}}>{c.time}min</span>}</div></div>)}</div>}
               </div>;
             })()}
 
@@ -509,11 +597,29 @@ export default function GymTracker({ user, signOut }){
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Last Workout</div>
               <div style={{...card,padding:"10px 14px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><span style={{fontSize:13,fontWeight:700,color:t.text}}>{lastWorkout.split}</span><span style={{fontSize:10,color:t.textFaint,marginLeft:6}}>{lastWorkout.date}</span></div><div style={{fontSize:8,color:getProgColor(lastWorkout.program),fontWeight:600,background:`${getProgColor(lastWorkout.program)}15`,padding:"2px 6px",borderRadius:6}}>{lastWorkout.program}</div></div>
-                {lastWorkout.exercises.slice(0,4).map((h,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><div style={{color:t.textSec}}>{h.exercise}{renderSetBadges(h.setDetails)}</div><div style={{display:"flex",gap:8}}><span style={{color:t.orange,fontWeight:600}}>{h.weight}lbs</span><span style={{color:t.textMuted}}>{h.sets}×{h.reps}</span></div></div>)}
+                {lastWorkout.exercises.slice(0,4).map((h,i)=><div key={i} style={{padding:"3px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}><span style={{color:t.textSec}}>{h.exercise}</span><span style={{fontSize:9,color:t.textFaint}}>{h.sets} sets</span></div>
+                  {h.setDetails?.length?<div style={{display:"flex",flexDirection:"column",gap:0,marginTop:1}}>{h.setDetails.map((sd,si)=><div key={si} style={{display:"flex",alignItems:"center",gap:3,fontSize:9,paddingLeft:4}}><span style={{width:12,fontSize:7,fontWeight:700,color:STL[sd.type]?.color||t.textMuted}}>{sd.type||"S"}</span>{sd.type==="D"?sd.drops?.map((dr,di)=><span key={di} style={{color:di===0?t.orange:t.textMuted}}>{dr.weight}×{dr.reps}{di<sd.drops.length-1?" → ":""}</span>):<><span style={{color:t.orange,fontWeight:600}}>{sd.weight}lbs</span><span style={{color:t.textFaint}}>×</span><span style={{color:t.textMuted}}>{sd.reps}</span></>}</div>)}</div>:<div style={{fontSize:10,paddingLeft:4}}><span style={{color:t.orange,fontWeight:600}}>{h.weight}lbs</span> <span style={{color:t.textMuted}}>{h.sets}×{h.reps}</span></div>}
+                </div>)}
                 {lastWorkout.exercises.length>4&&<div style={{fontSize:9,color:t.textFaint,textAlign:"center",paddingTop:2}}>+{lastWorkout.exercises.length-4} more</div>}
                 {lastWorkout.topLift&&<div style={{marginTop:6,padding:"5px 8px",background:t.yellowBg,borderRadius:6,display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12}}>&#127942;</span><span style={{fontSize:10,color:t.yellow,fontWeight:600}}>Top: {lastWorkout.topLift.exercise} — {lastWorkout.topLift.weight}lbs</span></div>}
               </div>
             </div>}
+
+            {/* 4b. LAST CARDIO */}
+            {!editing&&(()=>{const lc=getLastCardio();if(!lc)return null;return <div style={{marginBottom:14}}>
+              <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Last Cardio</div>
+              <div style={{...card,padding:"10px 14px",borderLeft:`3px solid ${CARDIO_COLOR}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div><span style={{fontSize:13,fontWeight:700,color:t.text}}>🏃 {lc.type}</span><span style={{fontSize:10,color:t.textFaint,marginLeft:6}}>{lc.date}</span></div>
+                  <div style={{display:"flex",gap:8,fontSize:12}}>
+                    {lc.distance>0&&<span style={{color:CARDIO_COLOR,fontWeight:700}}>{lc.distance}{lc.unit}</span>}
+                    {lc.time>0&&<span style={{color:t.textSec}}>{lc.time}min</span>}
+                  </div>
+                </div>
+                {lc.pace>0&&<div style={{fontSize:10,color:t.textFaint,marginTop:2}}>Pace: {lc.pace} min/{lc.unit}</div>}
+              </div>
+            </div>;})()}
 
             {/* 5. RECENT PRs */}
             {!editing&&recentPRs.length>0&&<div style={{marginBottom:14}}>
@@ -554,7 +660,10 @@ export default function GymTracker({ user, signOut }){
                     </div>
                     <button onClick={()=>{setSwappingExIdx(null);setSwapSearch("");}} style={{marginTop:4,width:"100%",padding:"5px 0",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:10,cursor:"pointer"}}>Cancel</button>
                   </div>}
-                  {lastTime&&swappingExIdx!==exIdx&&<div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6,padding:"4px 8px",background:t.accentBg,borderRadius:6,border:`1px solid ${t.accent}20`}}><div style={{fontSize:8,color:t.textMuted,fontWeight:600}}>LAST:</div><div style={{fontSize:11,fontWeight:700,color:t.accent}}>{lastTime.weight}lbs</div><div style={{fontSize:8,color:t.textFaint}}>×</div><div style={{fontSize:11,fontWeight:600,color:t.textSec}}>{lastTime.reps}reps</div><div style={{fontSize:8,color:t.textFaint}}>·</div><div style={{fontSize:8,color:t.textFaint}}>{lastTime.sets}sets</div><div style={{fontSize:8,color:t.textFaint,marginLeft:"auto"}}>{lastTime.date}</div></div>}
+                  {lastTime&&swappingExIdx!==exIdx&&<div style={{marginBottom:6,padding:"4px 8px",background:t.accentBg,borderRadius:6,border:`1px solid ${t.accent}20`}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:lastTime.setDetails?.length?2:0}}><div style={{fontSize:8,color:t.textMuted,fontWeight:600}}>LAST: {lastTime.date}</div><div style={{fontSize:8,color:t.textFaint}}>{lastTime.sets} sets</div></div>
+                    {lastTime.setDetails?.length?<div style={{display:"flex",flexDirection:"column",gap:1}}>{lastTime.setDetails.map((sd,si)=><div key={si} style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><span style={{width:14,textAlign:"center",fontSize:8,fontWeight:700,color:STL[sd.type]?.color||t.textMuted}}>{sd.type||"S"}</span>{sd.type==="D"?sd.drops?.map((dr,di)=><span key={di} style={{color:di===0?t.accent:t.textMuted,fontWeight:di===0?700:400}}>{dr.weight}×{dr.reps}{di<sd.drops.length-1?<span style={{color:t.textFaint,margin:"0 2px"}}>→</span>:""}</span>):<><span style={{fontWeight:700,color:t.accent}}>{sd.weight}lbs</span><span style={{color:t.textFaint}}>×</span><span style={{color:t.textSec}}>{sd.reps}</span></>}</div>)}</div>:<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:11,fontWeight:700,color:t.accent}}>{lastTime.weight}lbs</span><span style={{fontSize:8,color:t.textFaint}}>×</span><span style={{fontSize:11,fontWeight:600,color:t.textSec}}>{lastTime.reps}reps</span></div>}
+                  </div>}
                   {Array.from({length:count}).map((_,si)=>{const tp=getType(ex.name,si);const s=getS(ex.name,si);const ew=getEffectiveWeight(ex.name,si);const filled=tp!=="D"?(ew&&s.reps):getS(ex.name,si,0).weight;const confirmed=isSetConfirmed(ex.name,si);return(
                     <div key={si}>
                       <div style={{marginBottom:3}}>
@@ -567,7 +676,7 @@ export default function GymTracker({ user, signOut }){
                               <input inputMode="numeric" value={s.reps} onChange={e=>upS(ex.name,si,"reps",e.target.value.replace(/\D/g,""))} placeholder="Reps" style={{flex:1,padding:"7px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:16,outline:"none",textAlign:"center",minWidth:0,boxSizing:"border-box"}}/>
                             </div>
                           )}
-                          {filled&&!confirmed?<button onClick={()=>confirmSet(ex.name,exIdx,si)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${t.green}60`,background:t.greenBg,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:3}} title="Confirm set & start rest"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg><span style={{fontSize:8,fontWeight:700,color:t.green}}>Done</span></button>:confirmed?<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="3" strokeLinecap="round" style={{flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>:<div style={{width:14}}/>}
+                          {filled&&!confirmed?<button onClick={()=>confirmSet(ex.name,exIdx,si)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${t.green}60`,background:t.greenBg,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:3}} title="Confirm set & start rest"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg><span style={{fontSize:8,fontWeight:700,color:t.green}}>Done</span></button>:confirmed?<button onClick={()=>unconfirmSet(ex.name,si)} style={{background:"none",border:"none",cursor:"pointer",padding:2,flexShrink:0}} title="Tap to undo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg></button>:<div style={{width:14}}/>}
                         </div>
                         {tp==="D"&&<div style={{fontSize:8,color:t.yellow,marginLeft:46,marginTop:1}}>Drop 1 → 2 → 3</div>}
                         {tp==="M"&&si===0&&<div style={{fontSize:8,color:t.red,marginLeft:46,marginTop:1}}>Activation set</div>}
@@ -620,19 +729,19 @@ export default function GymTracker({ user, signOut }){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:3}}>{DOW.map(d=><div key={d} style={{textAlign:"center",fontSize:9,fontWeight:600,color:t.textFaint,padding:"2px 0"}}>{d}</div>)}</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:12}}>
-            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const isSel=calSelDay===d.iso;const isT=d.iso===toLocalISO(new Date());const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):"transparent";
-              return <button key={d.iso} onClick={()=>setCalSelDay(isSel?null:d.iso)} style={{aspectRatio:"1",borderRadius:8,border:"none",cursor:hw?"pointer":"default",background:isSel?`${dc}25`:(isT?t.surfaceAlt:t.surface),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,outline:isSel?`2px solid ${dc}`:"none",padding:0}}>
-                <div style={{fontSize:11,fontWeight:isT?800:500,color:isT?t.text:(hw?t.textDim:t.textFaint)}}>{d.day}</div>
-                {hw&&<div style={{display:"flex",gap:2}}>{splits.slice(0,2).map((s,j)=><div key={j} style={{width:4,height:4,borderRadius:"50%",background:getSplitColor(s)}}/>)}</div>}
+            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const hc=cardioHistory.some(c=>c.isoDate===d.iso);const hasAny=hw||hc;const isSel=calSelDay===d.iso;const isT=d.iso===toLocalISO(new Date());const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):(hc?CARDIO_COLOR:"transparent");
+              return <button key={d.iso} onClick={()=>setCalSelDay(isSel?null:d.iso)} style={{aspectRatio:"1",borderRadius:8,border:"none",cursor:hasAny?"pointer":"default",background:isSel?`${dc}25`:(isT?t.surfaceAlt:t.surface),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,outline:isSel?`2px solid ${dc}`:"none",padding:0}}>
+                <div style={{fontSize:11,fontWeight:isT?800:500,color:isT?t.text:(hasAny?t.textDim:t.textFaint)}}>{d.day}</div>
+                {hasAny&&<div style={{display:"flex",gap:2}}>{splits.slice(0,2).map((s,j)=><div key={j} style={{width:4,height:4,borderRadius:"50%",background:getSplitColor(s)}}/>)}{hc&&<div style={{width:4,height:4,borderRadius:"50%",background:CARDIO_COLOR}}/>}</div>}
               </button>;
             })}
           </div>
-          {calSelDay&&(()=>{const de=history.filter(h=>h.isoDate===calSelDay);if(!de.length)return null;const bs={};de.forEach(h=>{const k=h.split||"W";if(!bs[k])bs[k]=[];bs[k].push(h);});const dd=new Date(calSelDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});const isEditing=editingHistory&&editingHistory.length>0&&editingHistory[0].isoDate===calSelDay;
-            return <div style={{...cardWithTop(getSplitColor(de[0]?.split)),padding:"12px 14px",marginBottom:12}}>
+          {calSelDay&&(()=>{const de=history.filter(h=>h.isoDate===calSelDay);const dc=cardioHistory.filter(c=>c.isoDate===calSelDay);if(!de.length&&!dc.length)return null;const bs={};de.forEach(h=>{const k=h.split||"W";if(!bs[k])bs[k]=[];bs[k].push(h);});const dd=new Date(calSelDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});const isEditing=editingHistory&&editingHistory.length>0&&editingHistory[0].isoDate===calSelDay;
+            return <div style={{...cardWithTop(de.length?getSplitColor(de[0]?.split):CARDIO_COLOR),padding:"12px 14px",marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div><div style={{fontSize:13,fontWeight:700,color:t.text}}>{dd}</div><div style={{fontSize:10,color:getProgColor(de[0].program),fontWeight:600}}>{de[0].program}</div></div>
+                <div><div style={{fontSize:13,fontWeight:700,color:t.text}}>{dd}</div>{de.length?<div style={{fontSize:10,color:getProgColor(de[0].program),fontWeight:600}}>{de[0].program}</div>:<div style={{fontSize:10,color:CARDIO_COLOR,fontWeight:600}}>Cardio</div>}</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  {!isEditing&&<button onClick={()=>startEditHistory(de.map(h=>({...h,_origExercise:h.exercise})))} style={{background:"none",border:"none",color:t.accent,cursor:"pointer",fontSize:10,fontWeight:600}}>Edit</button>}
+                  {!isEditing&&de.length>0&&<button onClick={()=>startEditHistory(de.map(h=>({...h,_origExercise:h.exercise})))} style={{background:"none",border:"none",color:t.accent,cursor:"pointer",fontSize:10,fontWeight:600}}>Edit</button>}
                   <button onClick={()=>{setCalSelDay(null);setEditingHistory(null);}} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:16}}>×</button>
                 </div>
               </div>
@@ -642,18 +751,32 @@ export default function GymTracker({ user, signOut }){
                     <span style={{fontSize:12,color:t.textDim,fontWeight:600}}>{h.exercise}</span>
                     <button onClick={()=>deleteHistoryEntry(i)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:12,padding:"0 2px"}}>×</button>
                   </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <div style={{flex:1}}><div style={{fontSize:8,color:t.textMuted,marginBottom:2}}>WEIGHT</div><input value={h.weight} onChange={e=>updateEditEntry(i,"weight",e.target.value.replace(/[^\d.]/g,""))} style={{width:"100%",padding:"6px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.orange,fontSize:16,outline:"none",textAlign:"center",fontWeight:700,boxSizing:"border-box"}}/></div>
-                    <div style={{flex:1}}><div style={{fontSize:8,color:t.textMuted,marginBottom:2}}>SETS</div><input value={h.sets} onChange={e=>updateEditEntry(i,"sets",e.target.value.replace(/\D/g,""))} style={{width:"100%",padding:"6px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:16,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/></div>
-                    <div style={{flex:1}}><div style={{fontSize:8,color:t.textMuted,marginBottom:2}}>REPS</div><input value={h.reps} onChange={e=>updateEditEntry(i,"reps",e.target.value.replace(/\D/g,""))} style={{width:"100%",padding:"6px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:16,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/></div>
-                  </div>
+                  {h.setDetails?.length?<div style={{display:"flex",flexDirection:"column",gap:3}}>
+                    {h.setDetails.map((sd,si)=><div key={si} style={{display:"flex",gap:4,alignItems:"center"}}>
+                      <div style={{width:16,fontSize:8,fontWeight:700,color:STL[sd.type]?.color||t.textMuted,textAlign:"center"}}>{sd.type||"S"}</div>
+                      {sd.type==="D"?<div style={{flex:1,fontSize:9,color:t.textFaint}}>Drop set (view only)</div>:<>
+                        <input inputMode="decimal" value={sd.weight||""} onChange={e=>updateEditSetDetail(i,si,"weight",e.target.value.replace(/[^\d.]/g,""))} style={{flex:1,padding:"5px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.orange,fontSize:14,outline:"none",textAlign:"center",fontWeight:700,boxSizing:"border-box"}}/>
+                        <span style={{fontSize:9,color:t.textFaint}}>×</span>
+                        <input inputMode="numeric" value={sd.reps||""} onChange={e=>updateEditSetDetail(i,si,"reps",e.target.value.replace(/\D/g,""))} style={{flex:1,padding:"5px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:14,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/>
+                      </>}
+                      <button onClick={()=>deleteEditSetDetail(i,si)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:10,padding:"0 2px",flexShrink:0}}>×</button>
+                    </div>)}
+                  </div>:<div style={{display:"flex",gap:6}}>
+                    <div style={{flex:1}}><div style={{fontSize:8,color:t.textMuted,marginBottom:2}}>WEIGHT</div><input inputMode="decimal" value={h.weight} onChange={e=>updateEditEntry(i,"weight",e.target.value.replace(/[^\d.]/g,""))} style={{width:"100%",padding:"6px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.orange,fontSize:16,outline:"none",textAlign:"center",fontWeight:700,boxSizing:"border-box"}}/></div>
+                    <div style={{flex:1}}><div style={{fontSize:8,color:t.textMuted,marginBottom:2}}>SETS</div><input inputMode="numeric" value={h.sets} onChange={e=>updateEditEntry(i,"sets",e.target.value.replace(/\D/g,""))} style={{width:"100%",padding:"6px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:16,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/></div>
+                    <div style={{flex:1}}><div style={{fontSize:8,color:t.textMuted,marginBottom:2}}>REPS</div><input inputMode="numeric" value={h.reps} onChange={e=>updateEditEntry(i,"reps",e.target.value.replace(/\D/g,""))} style={{width:"100%",padding:"6px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:16,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/></div>
+                  </div>}
                 </div>)}
                 <div style={{display:"flex",gap:6,marginTop:8}}>
                   <button onClick={saveEditHistory} style={{flex:1,padding:10,borderRadius:8,border:"none",background:t.green,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>Save Changes</button>
                   <button onClick={()=>setEditingHistory(null)} style={{flex:1,padding:10,borderRadius:8,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:12,cursor:"pointer"}}>Cancel</button>
                 </div>
               </div>:
-              Object.entries(bs).map(([sn,entries])=><div key={sn} style={{marginBottom:8}}><div style={{fontSize:10,fontWeight:700,color:t.green,marginBottom:3,textTransform:"uppercase"}}>{sn}</div>{entries.map((h,i)=><div key={i} style={{padding:"4px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:t.textDim}}>{h.exercise}</span><div style={{display:"flex",gap:10,fontSize:11}}><span style={{color:t.orange,fontWeight:700}}>{h.weight}lbs</span><span style={{color:t.textSec}}>{h.sets}×{h.reps}</span></div></div>{renderSetBadges(h.setDetails)}</div>)}</div>)}
+              Object.entries(bs).map(([sn,entries])=><div key={sn} style={{marginBottom:8}}><div style={{fontSize:10,fontWeight:700,color:t.green,marginBottom:3,textTransform:"uppercase"}}>{sn}</div>{entries.map((h,i)=><div key={i} style={{padding:"4px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:t.textDim}}>{h.exercise}</span><span style={{fontSize:9,color:t.textFaint}}>{h.sets} sets</span></div>
+                {h.setDetails?.length?<div style={{display:"flex",flexDirection:"column",gap:0,marginTop:1}}>{h.setDetails.map((sd,si)=><div key={si} style={{display:"flex",alignItems:"center",gap:3,fontSize:10,paddingLeft:4}}><span style={{width:14,fontSize:8,fontWeight:700,color:STL[sd.type]?.color||t.textMuted}}>{sd.type||"S"}</span>{sd.type==="D"?sd.drops?.map((dr,di)=><span key={di} style={{color:di===0?t.orange:t.textMuted}}>{dr.weight}×{dr.reps}{di<sd.drops.length-1?" → ":""}</span>):<><span style={{color:t.orange,fontWeight:700}}>{sd.weight}lbs</span><span style={{color:t.textFaint}}>×</span><span style={{color:t.textSec}}>{sd.reps}</span></>}</div>)}</div>:<div style={{paddingLeft:4,fontSize:11}}><span style={{color:t.orange,fontWeight:700}}>{h.weight}lbs</span> <span style={{color:t.textSec}}>{h.sets}×{h.reps}</span></div>}
+              </div>)}</div>)}
+              {dc.length>0&&<div style={{marginTop:de.length?8:0}}><div style={{fontSize:10,fontWeight:700,color:CARDIO_COLOR,marginBottom:3,textTransform:"uppercase"}}>🏃 Cardio</div>{dc.map((c,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}><span style={{fontSize:12,color:t.textDim}}>{c.type}</span><div style={{display:"flex",gap:8,fontSize:11}}>{c.distance>0&&<span style={{color:CARDIO_COLOR,fontWeight:700}}>{c.distance}{c.unit}</span>}{c.time>0&&<span style={{color:t.textSec}}>{c.time}min</span>}{c.pace>0&&<span style={{color:t.textFaint,fontSize:9}}>{c.pace}min/{c.unit}</span>}</div></div>)}</div>}
             </div>;
           })()}
           <div style={{display:"flex",gap:8,justifyContent:"center",padding:"4px 0",marginBottom:14,flexWrap:"wrap"}}>{primaryProg?primaryProg.splits.map((s,i)=><div key={s.name} style={{display:"flex",alignItems:"center",gap:3,fontSize:9,color:t.textMuted}}><div style={{width:6,height:6,borderRadius:"50%",background:SPLIT_COLORS[i%SPLIT_COLORS.length]}}/>{s.name}</div>):<div style={{fontSize:9,color:t.textFaint}}>No primary program set</div>}</div>
@@ -698,6 +821,46 @@ export default function GymTracker({ user, signOut }){
               <div style={{display:"flex",gap:6,marginTop:12}}>{[{l:"Sessions",v:data.length,c:t.textSec},{l:"Starting",v:data[0].weight,c:t.textMuted},{l:"Current",v:data[data.length-1].weight,c:t.green},{l:"Gained",v:`+${data[data.length-1].weight-data[0].weight}`,c:t.yellow}].map(s=><div key={s.l} style={{flex:1,...card,padding:"7px 8px"}}><div style={{fontSize:15,fontWeight:700,color:s.c}}>{s.v}</div><div style={{fontSize:9,color:t.textFaint,fontWeight:500}}>{s.l}</div></div>)}</div>
             </React.Fragment>;
           })()}
+
+          {/* Cardio Progress */}
+          <div style={{marginTop:20,marginBottom:20}}>
+            <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>🏃 Cardio</div>
+            {cardioHistory.length===0?<div style={{textAlign:"center",padding:20,color:t.textFaint,fontSize:12}}>No cardio logged yet. Use the "Add Cardio" button on the Log tab.</div>:<>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+                {[...new Set(cardioHistory.map(c=>c.type))].sort().map(ct=><button key={ct} onClick={()=>setCardioProgressType(ct)} style={{padding:"5px 12px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:cardioProgressType===ct?`1px solid ${CARDIO_COLOR}`:`1px solid ${t.border}`,background:cardioProgressType===ct?`${CARDIO_COLOR}20`:"transparent",color:cardioProgressType===ct?CARDIO_COLOR:t.textMuted}}>{ct}</button>)}
+              </div>
+              {cardioProgressType&&<>
+                <div style={{display:"flex",gap:3,marginBottom:8,background:t.surface,borderRadius:8,padding:2}}>
+                  {[{id:"distance",l:"Distance"},{id:"time",l:"Time"},{id:"pace",l:"Pace"}].map(m=><button key={m.id} onClick={()=>setCardioProgressMetric(m.id)} style={{flex:1,padding:"5px 0",borderRadius:6,border:"none",background:cardioProgressMetric===m.id?t.surfaceAlt:"transparent",color:cardioProgressMetric===m.id?CARDIO_COLOR:t.textMuted,fontWeight:600,fontSize:10,cursor:"pointer"}}>{m.l}</button>)}
+                </div>
+                {(()=>{const data=getCardioData(cardioProgressType,cardioProgressMetric);
+                  if(!data.length)return <div style={{textAlign:"center",padding:20,color:t.textFaint}}>No {cardioProgressType} data yet.</div>;
+                  const best=getCardioBest(cardioProgressType,cardioProgressMetric);
+                  const unit=cardioProgressMetric==="distance"?(cardioHistory.find(c=>c.type===cardioProgressType)?.unit||"mi"):cardioProgressMetric==="time"?"min":"min/"+((cardioHistory.find(c=>c.type===cardioProgressType)?.unit)||"mi");
+                  return <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <div style={{fontSize:15,fontWeight:700,color:t.text}}>{cardioProgressType}</div>
+                      <div style={{fontSize:10,color:CARDIO_COLOR,fontWeight:700,background:`${CARDIO_COLOR}15`,padding:"3px 8px",borderRadius:8}}>{cardioProgressMetric==="pace"?"Best":"PR"}: {best}{unit}</div>
+                    </div>
+                    <div style={{...card,padding:"12px 4px 4px 0"}}><ResponsiveContainer width="100%" height={160}><LineChart data={data}><CartesianGrid strokeDasharray="3 3" stroke={t.border}/><XAxis dataKey="date" tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}}/><YAxis tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}}/><Tooltip contentStyle={{background:t.surface,border:`1px solid ${t.border}`,borderRadius:8,fontSize:11,color:t.text}} formatter={v=>[`${v} ${unit}`,cardioProgressMetric]}/><Line type="monotone" dataKey="value" stroke={CARDIO_COLOR} strokeWidth={2.5} dot={{fill:CARDIO_COLOR,r:3}} activeDot={{r:5,fill:t.text,stroke:CARDIO_COLOR,strokeWidth:2}}/></LineChart></ResponsiveContainer></div>
+                    <div style={{display:"flex",gap:6,marginTop:8}}>{[{l:"Sessions",v:data.length,c:t.textSec},{l:"First",v:data[0].value,c:t.textMuted},{l:"Latest",v:data[data.length-1].value,c:t.green},{l:cardioProgressMetric==="pace"?"Improved":"Gained",v:`${cardioProgressMetric==="pace"?"":" +"}${(data[data.length-1].value-data[0].value).toFixed(1)}`,c:t.yellow}].map(s=><div key={s.l} style={{flex:1,...card,padding:"6px 6px"}}><div style={{fontSize:13,fontWeight:700,color:s.c}}>{s.v}</div><div style={{fontSize:8,color:t.textFaint}}>{s.l}</div></div>)}</div>
+                  </div>;
+                })()}
+              </>}
+              {/* Recent cardio sessions */}
+              <div style={{marginTop:10}}>
+                <div style={{fontSize:9,color:t.textMuted,fontWeight:600,textTransform:"uppercase",marginBottom:4}}>Recent Sessions</div>
+                {[...cardioHistory].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0")).slice(0,5).map((c,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
+                  <div><span style={{fontSize:12,color:t.text,fontWeight:600}}>{c.type}</span><span style={{fontSize:9,color:t.textFaint,marginLeft:6}}>{c.date}</span></div>
+                  <div style={{display:"flex",gap:8,fontSize:11}}>
+                    {c.distance>0&&<span style={{color:CARDIO_COLOR,fontWeight:700}}>{c.distance}{c.unit}</span>}
+                    {c.time>0&&<span style={{color:t.textSec}}>{c.time}min</span>}
+                    {c.pace>0&&<span style={{color:t.textFaint,fontSize:9}}>{c.pace}min/{c.unit}</span>}
+                  </div>
+                </div>)}
+              </div>
+            </>}
+          </div>
 
           {/* Exercise Database */}
           <div style={{marginTop:20}}>
@@ -770,9 +933,11 @@ export default function GymTracker({ user, signOut }){
                   const {data:found,error:fErr}=await supabase.from("profiles").select("id,username").eq("friend_code",code).single();
                   if(fErr||!found){setAddFriendError("Friend code not found.");return;}
                   if(friends.some(f=>f.id===found.id)){setAddFriendError("Already friends!");return;}
-                  const {error:i1}=await supabase.from("friendships").insert({user_id:user.id,friend_id:found.id});
-                  if(i1){setAddFriendError("Failed to add friend.");return;}
-                  await supabase.from("friendships").insert({user_id:found.id,friend_id:user.id});
+                  // Insert both directions so friendship is mutual
+                  const {error:i1}=await supabase.from("friendships").upsert({user_id:user.id,friend_id:found.id},{onConflict:"user_id,friend_id",ignoreDuplicates:true});
+                  if(i1){setAddFriendError("Failed to add friend: "+i1.message);return;}
+                  const {error:i2}=await supabase.from("friendships").upsert({user_id:found.id,friend_id:user.id},{onConflict:"user_id,friend_id",ignoreDuplicates:true});
+                  if(i2)console.warn("[Friends] Reverse insert failed (RLS):",i2.message);
                   setAddFriendSuccess(true);await loadFriends();setTimeout(()=>{setShowAddFriend(false);setAddFriendCode("");setAddFriendSuccess(false);},1200);
                 }catch(e){setAddFriendError("Connection error. Try again.");}}} disabled={addFriendCode.trim().length<4} style={{flex:1,padding:12,borderRadius:10,border:"none",background:addFriendCode.trim().length>=4?t.accent:t.surfaceAlt,color:addFriendCode.trim().length>=4?"#fff":t.textFaint,fontWeight:700,fontSize:13,cursor:addFriendCode.trim().length>=4?"pointer":"not-allowed"}}>Add Friend</button>
               </div>
@@ -825,13 +990,11 @@ export default function GymTracker({ user, signOut }){
           </div>
           <div style={{marginBottom:14}}>
             {workoutSummary.entries.map((h,i)=><div key={i} style={{padding:"6px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
-              <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:h.setDetails?.length?2:0}}>
                 <span style={{fontSize:12,color:t.textDim}}>{h.exercise}</span>
-                <div style={{display:"flex",gap:8,fontSize:11}}>
-                  <span style={{color:t.orange,fontWeight:700}}>{h.weight}lbs</span>
-                  <span style={{color:t.textSec}}>{h.sets}x{h.reps}</span>
-                </div>
+                <span style={{fontSize:9,color:t.textFaint}}>{h.sets} sets</span>
               </div>
+              {h.setDetails?.length?<div style={{display:"flex",flexDirection:"column",gap:1}}>{h.setDetails.map((sd,si)=><div key={si} style={{display:"flex",alignItems:"center",gap:4,fontSize:10,paddingLeft:4}}><span style={{width:14,textAlign:"center",fontSize:8,fontWeight:700,color:STL[sd.type]?.color||t.textMuted}}>{sd.type||"S"}</span>{sd.type==="D"?sd.drops?.map((dr,di)=><span key={di} style={{color:di===0?t.orange:t.textMuted,fontWeight:di===0?700:400}}>{dr.weight}×{dr.reps}{di<sd.drops.length-1?<span style={{color:t.textFaint,margin:"0 2px"}}>→</span>:""}</span>):<><span style={{fontWeight:700,color:t.orange}}>{sd.weight}lbs</span><span style={{color:t.textFaint}}>×</span><span style={{color:t.textSec}}>{sd.reps}</span></>}</div>)}</div>:<div style={{paddingLeft:4}}><span style={{fontSize:11,color:t.orange,fontWeight:700}}>{h.weight}lbs</span> <span style={{fontSize:11,color:t.textSec}}>{h.sets}×{h.reps}</span></div>}
               {renderSetBadges(h.setDetails)}
             </div>)}
           </div>
