@@ -752,12 +752,12 @@ export default function GymTracker({ user, signOut }){
                     <button onClick={()=>deleteHistoryEntry(i)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:12,padding:"0 2px"}}>×</button>
                   </div>
                   {h.setDetails?.length?<div style={{display:"flex",flexDirection:"column",gap:3}}>
-                    {h.setDetails.map((sd,si)=><div key={si} style={{display:"flex",gap:4,alignItems:"center"}}>
-                      <div style={{width:16,fontSize:8,fontWeight:700,color:STL[sd.type]?.color||t.textMuted,textAlign:"center"}}>{sd.type||"S"}</div>
-                      {sd.type==="D"?<div style={{flex:1,fontSize:9,color:t.textFaint}}>Drop set (view only)</div>:<>
-                        <input inputMode="decimal" value={sd.weight||""} onChange={e=>updateEditSetDetail(i,si,"weight",e.target.value.replace(/[^\d.]/g,""))} style={{flex:1,padding:"5px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.orange,fontSize:14,outline:"none",textAlign:"center",fontWeight:700,boxSizing:"border-box"}}/>
-                        <span style={{fontSize:9,color:t.textFaint}}>×</span>
-                        <input inputMode="numeric" value={sd.reps||""} onChange={e=>updateEditSetDetail(i,si,"reps",e.target.value.replace(/\D/g,""))} style={{flex:1,padding:"5px 4px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:14,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box"}}/>
+                    {h.setDetails.map((sd,si)=><div key={si} style={{display:"flex",gap:4,alignItems:"center",minWidth:0,overflow:"hidden"}}>
+                      <div style={{width:14,fontSize:8,fontWeight:700,color:STL[sd.type]?.color||t.textMuted,textAlign:"center",flexShrink:0}}>{sd.type||"S"}</div>
+                      {sd.type==="D"?<div style={{flex:1,fontSize:9,color:t.textFaint,minWidth:0}}>Drop set (view only)</div>:<>
+                        <input inputMode="decimal" value={sd.weight||""} onChange={e=>updateEditSetDetail(i,si,"weight",e.target.value.replace(/[^\d.]/g,""))} style={{flex:"1 1 0%",padding:"5px 3px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.orange,fontSize:14,outline:"none",textAlign:"center",fontWeight:700,boxSizing:"border-box",minWidth:0}}/>
+                        <span style={{fontSize:9,color:t.textFaint,flexShrink:0}}>×</span>
+                        <input inputMode="numeric" value={sd.reps||""} onChange={e=>updateEditSetDetail(i,si,"reps",e.target.value.replace(/\D/g,""))} style={{flex:"1 1 0%",padding:"5px 3px",borderRadius:6,border:`1px solid ${t.border}`,background:t.inputBg,color:t.textSec,fontSize:14,outline:"none",textAlign:"center",fontWeight:600,boxSizing:"border-box",minWidth:0}}/>
                       </>}
                       <button onClick={()=>deleteEditSetDetail(i,si)} style={{background:"none",border:"none",color:t.red,cursor:"pointer",fontSize:10,padding:"0 2px",flexShrink:0}}>×</button>
                     </div>)}
