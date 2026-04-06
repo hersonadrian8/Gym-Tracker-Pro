@@ -163,24 +163,27 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{if(!user)return;(async()=>{try{
     const {data,error}=await supabase.from("profiles").select("username,friend_code,custom_exercises").eq("id",user.id).single();
     if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}if(data.custom_exercises&&typeof data.custom_exercises==="object"){setCustomExercises(prev=>({...data.custom_exercises,...prev}));}}
-    // Load full app data from cloud
+    // Load full app data from cloud — most recent write wins
     const cloud=await fetchAppData(user.id);
     if(cloud){
-      const hasLocal=!!localStorage.getItem("gt_history")||!!localStorage.getItem("gt_programs");
-      if(!hasLocal){
-        // Fresh device: use cloud data entirely
+      const cloudTs=cloud.lastModified||0;
+      const localTs=parseInt(localStorage.getItem("gt_last_modified"))||0;
+      if(cloudTs>localTs){
+        // Cloud is newer — use it as source of truth for everything
         if(cloud.programs)setPrograms(cloud.programs);
+        if(cloud.history)setHistory(cloud.history);
         if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(cloud.primaryProgIdx);
         if(cloud.appearance)setAppearance(cloud.appearance);
         if(cloud.customRestTimes)setCustomRestTimes(cloud.customRestTimes);
         if(cloud.favoriteExercises)setFavoriteExercises(new Set(cloud.favoriteExercises));
         if(cloud.hiddenExercises)setHiddenExercises(new Set(cloud.hiddenExercises));
+        if(cloud.cardioHistory)setCardioHistory(cloud.cardioHistory);
         if(cloud.customCardio)setCustomCardio(cloud.customCardio);
-        console.log("[AppSync] Fresh device — loaded settings from cloud");
+        localStorage.setItem("gt_last_modified",String(cloudTs));
+        console.log("[AppSync] Cloud is newer — loaded all from cloud",new Date(cloudTs).toLocaleString());
+      } else {
+        console.log("[AppSync] Local is newer — keeping local data, cloud will be updated");
       }
-      // Always merge history & cardio from cloud (adds entries that don't exist locally)
-      if(cloud.history&&cloud.history.length)setHistory(prev=>{const merged=[...prev];let added=0;cloud.history.forEach(ch=>{if(!merged.find(h=>h.exercise===ch.exercise&&h.isoDate===ch.isoDate&&h.split===ch.split)){merged.push(ch);added++;}});console.log("[AppSync] Merged history: +"+added+" from cloud");return added>0?merged:prev;});
-      if(cloud.cardioHistory&&cloud.cardioHistory.length)setCardioHistory(prev=>{const merged=[...prev];let added=0;cloud.cardioHistory.forEach(ch=>{if(!merged.find(c=>c.type===ch.type&&c.isoDate===ch.isoDate&&c.distance===ch.distance)){merged.push(ch);added++;}});return added>0?merged:prev;});
     }
     setCloudLoaded(true);
   }catch(e){console.warn("[AppSync] Load failed:",e.message);setCloudLoaded(true);}})();},[user]);
@@ -220,6 +223,7 @@ export default function GymTracker({ user, signOut }){
     if(!user||!cloudLoaded)return;
     if(syncTimerRef.current)clearTimeout(syncTimerRef.current);
     syncTimerRef.current=setTimeout(()=>{
+      const now=Date.now();
       const appData={
         programs,
         history,
@@ -230,7 +234,9 @@ export default function GymTracker({ user, signOut }){
         hiddenExercises:[...hiddenExercises],
         cardioHistory,
         customCardio,
+        lastModified:now,
       };
+      localStorage.setItem("gt_last_modified",String(now));
       syncAppData(user.id,appData);
     },2000);
     return()=>{if(syncTimerRef.current)clearTimeout(syncTimerRef.current);};
