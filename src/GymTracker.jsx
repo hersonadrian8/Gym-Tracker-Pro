@@ -1,410 +1,345 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { supabase } from "./supabaseClient";
-import { syncPerformanceStats, fetchFriendStats, syncCustomExercises, syncAppData, fetchAppData } from "./utils/syncPerformance";
+import { syncPerformanceStats } from "./utils/syncPerformance";
+import {
+  MUSCLE_GROUPS, MC, STL, THEMES, EXERCISE_DB, DEFAULT_PROGRAMS,
+  DOW, CARDIO_COLOR, SPLIT_COLORS, getProgColor,
+} from "./constants";
+import { toLocalISO, fc, fcSigned, getSunday, getPR, getCD } from "./utils/helpers";
+import { useRestTimer } from "./hooks/useRestTimer";
+import { useCloudSync, useLocalStorage } from "./hooks/useCloudSync";
+import { useFriends } from "./hooks/useFriends";
+import { useCardio } from "./hooks/useCardio";
 
-const MUSCLE_GROUPS = ["Chest","Back","Shoulders","Quads","Hamstrings","Glutes","Triceps","Biceps","Calves","Core","Forearms"];
-const MC = { Chest:"#ef4444",Back:"#3b82f6",Shoulders:"#f59e0b",Quads:"#10b981",Hamstrings:"#8b5cf6",Glutes:"#f472b6",Triceps:"#ec4899",Biceps:"#f97316",Calves:"#06b6d4",Core:"#a78bfa",Forearms:"#84cc16" };
-const STL = { S:{label:"S",full:"Standard",color:"#818cf8"}, D:{label:"D",full:"Drop Set",color:"#f59e0b"}, M:{label:"M",full:"Myo Set",color:"#ef4444"} };
-const PROGRAM_COLORS = { "Push / Pull / Legs":"#818cf8", "Upper / Lower":"#10b981", "Bro Split":"#f59e0b" };
-const getProgColor = (name) => PROGRAM_COLORS[name] || "#818cf8";
+const initLS = (key, fallback) => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
+const initLSSet = (key, fallback) => { try { const s = localStorage.getItem(key); return s ? new Set(JSON.parse(s)) : fallback; } catch { return fallback; } };
 
-const CARDIO_DB = ["Running","Walking","Cycling","Swimming","Rowing","Elliptical","Stair Climber","Jump Rope","Hiking","Sprints","HIIT","Treadmill","Stationary Bike","Skiing","Boxing"];
-const CARDIO_COLOR = "#06b6d4";
+export default function GymTracker({ user, signOut }) {
+  // ─── Core State ─────────────────────────────
+  const [tab, setTab] = useState("log");
+  const [programs, setPrograms] = useState(() => initLS("gt_programs", [...DEFAULT_PROGRAMS]));
+  const [history, setHistory] = useState(() => initLS("gt_history", []));
+  const [logPhase, setLogPhase] = useState("home");
+  const [selProgIdx, setSelProgIdx] = useState(0);
+  const [selSplitIdx, setSelSplitIdx] = useState(null);
+  const [workoutLog, setWorkoutLog] = useState({});
+  const [setCounts, setSetCounts] = useState({});
+  const [manuallyEdited, setManuallyEdited] = useState({});
+  const [editing, setEditing] = useState(false);
+  const [showAddProg, setShowAddProg] = useState(false);
+  const [newProgName, setNewProgName] = useState("");
+  const [showAddSplit, setShowAddSplit] = useState(false);
+  const [newSplitName, setNewSplitName] = useState("");
+  const [showAddEx, setShowAddEx] = useState(false);
+  const [newExName, setNewExName] = useState("");
+  const [newExMuscle, setNewExMuscle] = useState("Chest");
+  const [exSearch, setExSearch] = useState("");
+  const [chartEx, setChartEx] = useState("Bench Press");
+  const [primaryProgIdx, setPrimaryProgIdx] = useState(() => { try { return parseInt(localStorage.getItem("gt_primary_prog")) || 0; } catch { return 0; } });
+  const [calMonth, setCalMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
+  const [calSelDay, setCalSelDay] = useState(null);
+  const [weekSelDay, setWeekSelDay] = useState(null);
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const [editingHistory, setEditingHistory] = useState(null);
+  const [workoutSummary, setWorkoutSummary] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState("profile");
+  const [profileName, setProfileName] = useState("");
+  const [profileDraft, setProfileDraft] = useState("");
+  const [friendCode, setFriendCode] = useState("");
+  const [appearance, setAppearance] = useState(() => localStorage.getItem("gt_appearance") || "auto");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [nameConfirmed, setNameConfirmed] = useState(false);
+  const [confirmedSets, setConfirmedSets] = useState({});
+  const [dbMuscleFilter, setDbMuscleFilter] = useState("All");
+  const [customRestTimes, setCustomRestTimes] = useState(() => initLS("gt_custom_rest", {}));
+  const [customExercises, setCustomExercises] = useState(() => initLS("gt_custom_exercises", {}));
+  const [editingRestEx, setEditingRestEx] = useState(null);
+  const [editingRestVal, setEditingRestVal] = useState("");
+  const [editingMuscleEx, setEditingMuscleEx] = useState(null);
+  const [editingDb, setEditingDb] = useState(false);
+  const [hiddenExercises, setHiddenExercises] = useState(() => initLSSet("gt_hidden_exercises", new Set()));
+  const [progressMuscleFilter, setProgressMuscleFilter] = useState("All");
+  const [favoriteExercises, setFavoriteExercises] = useState(() => initLSSet("gt_favorites", new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"])));
+  const [progressView, setProgressView] = useState("favorites");
+  const [swappingExIdx, setSwappingExIdx] = useState(null);
+  const [swapSearch, setSwapSearch] = useState("");
+  const [editSwapIdx, setEditSwapIdx] = useState(null);
+  const [editSwapSplit, setEditSwapSplit] = useState(null);
+  const [editSwapSearch, setEditSwapSearch] = useState("");
+  const [friendsCompareView, setFriendsCompareView] = useState("favorites");
+  const [friendsMuscleFilter, setFriendsMuscleFilter] = useState("Chest");
+  const [friendInfoDismissed, setFriendInfoDismissed] = useState(() => localStorage.getItem("gt_friend_info_dismissed") === "true");
+  const [workoutStart, setWorkoutStart] = useState(null);
+  const [sessionElapsed, setSessionElapsed] = useState(0);
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importSelected, setImportSelected] = useState(new Set());
+  const [importError, setImportError] = useState("");
+  const importRef = useRef(null);
 
-const EXERCISE_DB = {
-  "Bench Press":{muscle:"Chest",rest:120},"Incline Bench Press":{muscle:"Chest",rest:120},"Dumbbell Bench Press":{muscle:"Chest",rest:90},
-  "Incline Dumbbell Press":{muscle:"Chest",rest:90},"Cable Flyes":{muscle:"Chest",rest:60},"Chest Dips":{muscle:"Chest",rest:90},
-  "Pec Deck":{muscle:"Chest",rest:60},"Decline Bench Press":{muscle:"Chest",rest:120},
-  "Barbell Rows":{muscle:"Back",rest:90},"Pull-Ups":{muscle:"Back",rest:90},"Seated Cable Rows":{muscle:"Back",rest:90},
-  "Lat Pulldowns":{muscle:"Back",rest:90},"Dumbbell Rows":{muscle:"Back",rest:90},"Deadlifts":{muscle:"Back",rest:180},
-  "T-Bar Rows":{muscle:"Back",rest:90},"Chin-Ups":{muscle:"Back",rest:90},
-  "Overhead Press":{muscle:"Shoulders",rest:90},"Lateral Raises":{muscle:"Shoulders",rest:60},"Face Pulls":{muscle:"Shoulders",rest:60},
-  "Arnold Press":{muscle:"Shoulders",rest:90},"Rear Delt Flyes":{muscle:"Shoulders",rest:60},"Front Raises":{muscle:"Shoulders",rest:60},
-  "Cable Lateral Raises":{muscle:"Shoulders",rest:60},
-  "Squats":{muscle:"Quads",rest:150},"Leg Press":{muscle:"Quads",rest:120},"Leg Extensions":{muscle:"Quads",rest:60},
-  "Bulgarian Split Squats":{muscle:"Quads",rest:90},"Lunges":{muscle:"Quads",rest:90},"Hack Squats":{muscle:"Quads",rest:120},
-  "Romanian Deadlifts":{muscle:"Hamstrings",rest:120},"Leg Curls":{muscle:"Hamstrings",rest:60},"Stiff-Leg Deadlifts":{muscle:"Hamstrings",rest:120},
-  "Hip Thrusts":{muscle:"Glutes",rest:90},"Glute Bridges":{muscle:"Glutes",rest:60},"Cable Kickbacks":{muscle:"Glutes",rest:60},
-  "Tricep Pushdowns":{muscle:"Triceps",rest:60},"Overhead Tricep Extension":{muscle:"Triceps",rest:60},"Dips":{muscle:"Triceps",rest:90},
-  "Skull Crushers":{muscle:"Triceps",rest:60},"Close-Grip Bench Press":{muscle:"Triceps",rest:90},
-  "Barbell Curls":{muscle:"Biceps",rest:60},"Hammer Curls":{muscle:"Biceps",rest:60},"Preacher Curls":{muscle:"Biceps",rest:60},
-  "Incline Dumbbell Curls":{muscle:"Biceps",rest:60},"Concentration Curls":{muscle:"Biceps",rest:60},
-  "Calf Raises":{muscle:"Calves",rest:60},"Seated Calf Raises":{muscle:"Calves",rest:60},
-  "Plank":{muscle:"Core",rest:60},"Cable Crunches":{muscle:"Core",rest:60},"Hanging Leg Raises":{muscle:"Core",rest:60},
-  "Ab Rollouts":{muscle:"Core",rest:60},"Russian Twists":{muscle:"Core",rest:60},
-  "Wrist Curls":{muscle:"Forearms",rest:60},"Reverse Wrist Curls":{muscle:"Forearms",rest:60},
-};
-const DEFAULT_EXERCISE_DB = {...EXERCISE_DB};
+  // Cardio state (persisted)
+  const [cardioHistory, setCardioHistory] = useState(() => initLS("gt_cardio_history", []));
+  const [customCardio, setCustomCardio] = useState(() => initLS("gt_custom_cardio", []));
 
-const THEMES = {
-  dark: {
-    name:"Carbon Steel",bg:"#0a0a0a",surface:"#1c1c1e",surfaceAlt:"#2c2c2e",border:"#38383a",borderLight:"#38383a80",
-    text:"#f5f5f7",textDim:"#e5e5e7",textSec:"#98989d",textMuted:"#636366",textFaint:"#48484a",
-    accent:"#818cf8",accentDark:"#6366f1",accentBg:"#818cf815",
-    green:"#30d158",greenDark:"#28a745",greenBg:"#30d15820",
-    orange:"#ff9f0a",orangeBg:"#ff9f0a15",red:"#ff453a",redBg:"#ff453a20",
-    yellow:"#ffd60a",yellowBg:"#ffd60a15",inputBg:"#0a0a0a",
-    headerGrad:"linear-gradient(135deg,#1c1c1e,#0a0a0a)",restGrad:"linear-gradient(135deg,#0a0a0a,#1a1a2e)",
-    startGrad:"linear-gradient(135deg,#818cf8,#6366f1)",finishGrad:"linear-gradient(135deg,#30d158,#28a745)",
-    overlay:"rgba(0,0,0,0.75)",
-  },
-  light: {
-    name:"Concrete",bg:"#f2f2f7",surface:"#ffffff",surfaceAlt:"#e5e5ea",border:"#c6c6c8",borderLight:"#d1d1d680",
-    text:"#1c1c1e",textDim:"#3a3a3c",textSec:"#636366",textMuted:"#8e8e93",textFaint:"#aeaeb2",
-    accent:"#5856d6",accentDark:"#4a48c4",accentBg:"#5856d612",
-    green:"#34c759",greenDark:"#248a3d",greenBg:"#34c75918",
-    orange:"#ff9500",orangeBg:"#ff950012",red:"#ff3b30",redBg:"#ff3b3015",
-    yellow:"#ffcc00",yellowBg:"#ffcc0012",inputBg:"#f2f2f7",
-    headerGrad:"linear-gradient(135deg,#ffffff,#f2f2f7)",restGrad:"linear-gradient(135deg,#f2f2f7,#e8e8f0)",
-    startGrad:"linear-gradient(135deg,#5856d6,#4a48c4)",finishGrad:"linear-gradient(135deg,#34c759,#248a3d)",
-    overlay:"rgba(0,0,0,0.4)",
-  },
-};
+  // ─── Theme ──────────────────────────────────
+  useEffect(() => { const mq = window.matchMedia("(prefers-color-scheme: dark)"); const h = (e) => setSystemDark(e.matches); mq.addEventListener("change", h); return () => mq.removeEventListener("change", h); }, []);
+  const t = THEMES[appearance === "auto" ? (systemDark ? "dark" : "light") : appearance] || THEMES.dark;
 
-const DEFAULT_PROGRAMS = [
-  { id:"ppl", name:"Push / Pull / Legs", splits:[
-    { name:"Push", exercises:[{name:"Bench Press",muscle:"Chest"},{name:"Overhead Press",muscle:"Shoulders"},{name:"Incline Dumbbell Press",muscle:"Chest"},{name:"Lateral Raises",muscle:"Shoulders"},{name:"Tricep Pushdowns",muscle:"Triceps"},{name:"Overhead Tricep Extension",muscle:"Triceps"}]},
-    { name:"Pull", exercises:[{name:"Barbell Rows",muscle:"Back"},{name:"Pull-Ups",muscle:"Back"},{name:"Seated Cable Rows",muscle:"Back"},{name:"Face Pulls",muscle:"Shoulders"},{name:"Barbell Curls",muscle:"Biceps"},{name:"Hammer Curls",muscle:"Biceps"}]},
-    { name:"Legs", exercises:[{name:"Squats",muscle:"Quads"},{name:"Romanian Deadlifts",muscle:"Hamstrings"},{name:"Leg Press",muscle:"Quads"},{name:"Leg Curls",muscle:"Hamstrings"},{name:"Calf Raises",muscle:"Calves"},{name:"Bulgarian Split Squats",muscle:"Quads"}]},
-  ]},
-];
+  // ─── Custom Hooks ───────────────────────────
+  const { rSecs, rTotal, rActive, rAfterEx, rAfterSet, rProg, isOvertime, startR, stopR } = useRestTimer();
 
+  useCloudSync({
+    user, programs, history, primaryProgIdx, appearance, customRestTimes,
+    favoriteExercises, hiddenExercises, cardioHistory, customCardio, customExercises,
+    setPrograms, setHistory, setPrimaryProgIdx, setAppearance, setCustomRestTimes,
+    setFavoriteExercises, setHiddenExercises, setCardioHistory, setCustomCardio,
+    setCustomExercises, setFriendCode, setProfileName, setProfileDraft,
+  });
 
-const toLocalISO=(d)=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return `${y}-${m}-${day}`;};
-const fc=(s)=>{const a=Math.abs(s);return `${Math.floor(a/60)}:${(a%60).toString().padStart(2,"0")}`;};
-const fcSigned=(s)=>s>=0?fc(s):`+${fc(s)}`;
-const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-const getSunday=(d)=>{const dt=new Date(d);dt.setDate(dt.getDate()-dt.getDay());dt.setHours(0,0,0,0);return dt;};
+  const friendsHook = useFriends({ user, setCustomExercises, setFriendCode });
+  const {
+    friends, selFriend, setSelFriend, friendsLoading,
+    showAddFriend, setShowAddFriend,
+    addFriendCode, setAddFriendCode,
+    addFriendError, setAddFriendError,
+    addFriendSuccess, setAddFriendSuccess,
+    confirmRemoveFriend, setConfirmRemoveFriend,
+    loadFriends, removeFriend,
+  } = friendsHook;
 
-const FRIEND_COLORS=["#3b82f6","#f59e0b","#ef4444","#10b981","#8b5cf6","#f472b6","#06b6d4","#84cc16"];
+  const cardioHook = useCardio(cardioHistory, setCardioHistory, customCardio, setCustomCardio);
+  const {
+    showCardioLog, setShowCardioLog,
+    cardioType, setCardioType,
+    cardioDistance, setCardioDistance,
+    cardioDistUnit, setCardioDistUnit,
+    cardioTime, setCardioTime,
+    cardioSearch, setCardioSearch,
+    cardioProgressType, setCardioProgressType,
+    cardioProgressMetric, setCardioProgressMetric,
+    allCardioTypes, saveCardioSession,
+    getCardioData, getCardioBest, getLastCardio,
+  } = cardioHook;
 
-export default function GymTracker({ user, signOut }){
-  const [tab,setTab]=useState("log");
-  const [programs,setPrograms]=useState(()=>{try{const s=localStorage.getItem("gt_programs");return s?JSON.parse(s):[...DEFAULT_PROGRAMS];}catch{return [...DEFAULT_PROGRAMS];}});
-  const [history,setHistory]=useState(()=>{try{const s=localStorage.getItem("gt_history");return s?JSON.parse(s):[];}catch{return [];}});
-  const [friends,setFriends]=useState([]);
-  const [selFriend,setSelFriend]=useState(0);
-  const [logPhase,setLogPhase]=useState("home");
-  const [selProgIdx,setSelProgIdx]=useState(0);
-  const [selSplitIdx,setSelSplitIdx]=useState(null);
-  const [workoutLog,setWorkoutLog]=useState({});
-  const [setCounts,setSetCounts]=useState({});
-  const [manuallyEdited,setManuallyEdited]=useState({});
-  const [rSecs,setRSecs]=useState(0);const [rTotal,setRTotal]=useState(0);const [rActive,setRActive]=useState(false);const [rAfterEx,setRAfterEx]=useState(null);const [rAfterSet,setRAfterSet]=useState(null);const rRef=useRef(null);
-  const [editing,setEditing]=useState(false);const [showAddProg,setShowAddProg]=useState(false);const [newProgName,setNewProgName]=useState("");const [showAddSplit,setShowAddSplit]=useState(false);const [newSplitName,setNewSplitName]=useState("");const [showAddEx,setShowAddEx]=useState(false);const [newExName,setNewExName]=useState("");const [newExMuscle,setNewExMuscle]=useState("Chest");
-  const [exSearch,setExSearch]=useState("");
-  const [chartEx,setChartEx]=useState("Bench Press");
-  const [primaryProgIdx,setPrimaryProgIdx]=useState(()=>{try{return parseInt(localStorage.getItem("gt_primary_prog"))||0;}catch{return 0;}});
-  const [calMonth,setCalMonth]=useState(()=>{const n=new Date();return new Date(n.getFullYear(),n.getMonth(),1);});
-  const [calSelDay,setCalSelDay]=useState(null);
-  const [weekSelDay,setWeekSelDay]=useState(null);
-  const [showFinishConfirm,setShowFinishConfirm]=useState(false);
-  const [editingHistory,setEditingHistory]=useState(null);
-  const [workoutSummary,setWorkoutSummary]=useState(null);
-  const [showSettings,setShowSettings]=useState(false);
-  const [settingsTab,setSettingsTab]=useState("profile");
-  const [profileName,setProfileName]=useState("");
-  const [profileDraft,setProfileDraft]=useState("");
-  const [friendCode,setFriendCode]=useState("");
-  const [appearance,setAppearance]=useState(()=>localStorage.getItem("gt_appearance")||"auto");
-  const [codeCopied,setCodeCopied]=useState(false);
-  const [nameConfirmed,setNameConfirmed]=useState(false);
-  const [confirmedSets,setConfirmedSets]=useState({});
-  const [dbMuscleFilter,setDbMuscleFilter]=useState("All");
-  const [customRestTimes,setCustomRestTimes]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_rest"))||{};}catch{return {};}});
-  const [customExercises,setCustomExercises]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_exercises"))||{};}catch{return {};}});
-  const [editingRestEx,setEditingRestEx]=useState(null);
-  const [editingRestVal,setEditingRestVal]=useState("");
-  const [editingMuscleEx,setEditingMuscleEx]=useState(null);
-  const [editingDb,setEditingDb]=useState(false);
-  const [hiddenExercises,setHiddenExercises]=useState(()=>{try{const s=localStorage.getItem("gt_hidden_exercises");return s?new Set(JSON.parse(s)):new Set();}catch{return new Set();}});
-  const [progressMuscleFilter,setProgressMuscleFilter]=useState("All");
-  const [favoriteExercises,setFavoriteExercises]=useState(()=>{try{const s=localStorage.getItem("gt_favorites");return s?new Set(JSON.parse(s)):new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}catch{return new Set(["Bench Press","Squats","Deadlifts","Overhead Press","Barbell Rows","Romanian Deadlifts","Pull-Ups","Leg Press"]);}});
-  const [progressView,setProgressView]=useState("favorites");
-  const [swappingExIdx,setSwappingExIdx]=useState(null);
-  const [swapSearch,setSwapSearch]=useState("");
-  const [editSwapIdx,setEditSwapIdx]=useState(null);
-  const [editSwapSplit,setEditSwapSplit]=useState(null);
-  const [editSwapSearch,setEditSwapSearch]=useState("");
-  const [friendsCompareView,setFriendsCompareView]=useState("favorites");
-  const [friendsMuscleFilter,setFriendsMuscleFilter]=useState("Chest");
-  const [showAddFriend,setShowAddFriend]=useState(false);
-  const [addFriendCode,setAddFriendCode]=useState("");
-  const [friendInfoDismissed,setFriendInfoDismissed]=useState(()=>localStorage.getItem("gt_friend_info_dismissed")==="true");
-  const [workoutStart,setWorkoutStart]=useState(null);
-  const [sessionElapsed,setSessionElapsed]=useState(0);
-  const [systemDark,setSystemDark]=useState(()=>window.matchMedia?.("(prefers-color-scheme: dark)").matches??true);
-  const [addFriendError,setAddFriendError]=useState("");
-  const [addFriendSuccess,setAddFriendSuccess]=useState(false);
-  const [friendsLoading,setFriendsLoading]=useState(false);
-  const [confirmRemoveFriend,setConfirmRemoveFriend]=useState(null);
-  const [importPreview,setImportPreview]=useState(null);
-  const [importSelected,setImportSelected]=useState(new Set());
-  const [importError,setImportError]=useState("");
-  const importRef=useRef(null);
-  // Cardio
-  const [cardioHistory,setCardioHistory]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_cardio_history"))||[];}catch{return [];}});
-  const [customCardio,setCustomCardio]=useState(()=>{try{return JSON.parse(localStorage.getItem("gt_custom_cardio"))||[];}catch{return [];}});
-  const [showCardioLog,setShowCardioLog]=useState(false);
-  const [cardioType,setCardioType]=useState("");
-  const [cardioDistance,setCardioDistance]=useState("");
-  const [cardioDistUnit,setCardioDistUnit]=useState("mi");
-  const [cardioTime,setCardioTime]=useState("");
-  const [cardioSearch,setCardioSearch]=useState("");
-  const [cardioProgressType,setCardioProgressType]=useState("");
-  const [cardioProgressMetric,setCardioProgressMetric]=useState("distance");
+  // ─── localStorage Persistence ───────────────
+  useLocalStorage("gt_programs", programs);
+  useLocalStorage("gt_history", history);
+  useLocalStorage("gt_primary_prog", primaryProgIdx, String);
+  useLocalStorage("gt_appearance", appearance, String);
+  useLocalStorage("gt_custom_rest", customRestTimes);
+  useLocalStorage("gt_custom_exercises", customExercises);
+  useLocalStorage("gt_favorites", [...favoriteExercises]);
+  useLocalStorage("gt_friend_info_dismissed", friendInfoDismissed, String);
+  useLocalStorage("gt_hidden_exercises", [...hiddenExercises]);
+  useLocalStorage("gt_cardio_history", cardioHistory);
+  useLocalStorage("gt_custom_cardio", customCardio);
 
-  // Theme
-  useEffect(()=>{const mq=window.matchMedia("(prefers-color-scheme: dark)");const h=(e)=>setSystemDark(e.matches);mq.addEventListener("change",h);return()=>mq.removeEventListener("change",h);},[]);
-  const t=THEMES[appearance==="auto"?(systemDark?"dark":"light"):appearance]||THEMES.dark;
+  // ─── Derived / Memoized ─────────────────────
+  const fullExDB = useMemo(() => ({...EXERCISE_DB, ...customExercises}), [customExercises]);
 
-  // Load profile + app data from Supabase on login
-  const [cloudLoaded,setCloudLoaded]=useState(false);
-  useEffect(()=>{if(!user)return;(async()=>{try{
-    const {data,error}=await supabase.from("profiles").select("username,friend_code,custom_exercises").eq("id",user.id).single();
-    if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}if(data.custom_exercises&&typeof data.custom_exercises==="object"){setCustomExercises(prev=>({...data.custom_exercises,...prev}));}}
-    // Load full app data from cloud — most recent write wins
-    const cloud=await fetchAppData(user.id);
-    if(cloud){
-      const cloudTs=cloud.lastModified||0;
-      const localTs=parseInt(localStorage.getItem("gt_last_modified"))||0;
-      if(cloudTs>localTs){
-        // Cloud is newer — use it as source of truth for everything
-        if(cloud.programs)setPrograms(cloud.programs);
-        if(cloud.history)setHistory(cloud.history);
-        if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(cloud.primaryProgIdx);
-        if(cloud.appearance)setAppearance(cloud.appearance);
-        if(cloud.customRestTimes)setCustomRestTimes(cloud.customRestTimes);
-        if(cloud.favoriteExercises)setFavoriteExercises(new Set(cloud.favoriteExercises));
-        if(cloud.hiddenExercises)setHiddenExercises(new Set(cloud.hiddenExercises));
-        if(cloud.cardioHistory)setCardioHistory(cloud.cardioHistory);
-        if(cloud.customCardio)setCustomCardio(cloud.customCardio);
-        localStorage.setItem("gt_last_modified",String(cloudTs));
-        console.log("[AppSync] Cloud is newer — loaded all from cloud",new Date(cloudTs).toLocaleString());
-      } else {
-        console.log("[AppSync] Local is newer — keeping local data, cloud will be updated");
-      }
-    }
-    setCloudLoaded(true);
-  }catch(e){console.warn("[AppSync] Load failed:",e.message);setCloudLoaded(true);}})();},[user]);
-
-  // Load friends from Supabase
-  const loadFriends=useCallback(async()=>{if(!user)return;setFriendsLoading(true);try{
-    const {data:ships,error:sErr}=await supabase.from("friendships").select("friend_id").eq("user_id",user.id);
-    if(sErr||!ships||!ships.length){setFriends([]);setFriendsLoading(false);return;}
-    const friendIds=ships.map(s=>s.friend_id);
-    const {data:profiles,error:pErr}=await supabase.from("profiles").select("id,username,custom_exercises").in("id",friendIds);
-    console.log("[Friends] profiles query:",pErr?pErr.message:"OK",profiles?.length,"friends",profiles?.map(p=>({id:p.id,name:p.username,customEx:Object.keys(p.custom_exercises||{})})));
-    if(pErr){setFriendsLoading(false);return;}
-    const allFriendCustomEx={};
-    const friendsList=await Promise.all((profiles||[]).map(async(p,i)=>{
-      const hist=await fetchFriendStats(p.id);
-      const friendCustomEx=p.custom_exercises&&typeof p.custom_exercises==="object"?p.custom_exercises:{};
-      Object.assign(allFriendCustomEx,friendCustomEx);
-      console.log("[Friends]",p.username,"custom exercises:",Object.keys(friendCustomEx),"history entries:",hist.length);
-      return{id:p.id,name:p.username||"Friend",history:hist,customExercises:friendCustomEx,color:FRIEND_COLORS[i%FRIEND_COLORS.length]};
-    }));
-    // Merge all friends' custom exercises into local DB (without overwriting local ones)
-    if(Object.keys(allFriendCustomEx).length>0){
-      setCustomExercises(prev=>{const merged={...allFriendCustomEx,...prev};const changed=Object.keys(merged).length!==Object.keys(prev).length;return changed?merged:prev;});
-    }
-    setFriends(friendsList);
-  }catch(e){/* offline */}setFriendsLoading(false);},[user]);
-  const genFriendCode=()=>"GT-"+Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b=>b.toString(36).toUpperCase()).join("").slice(0,6).padEnd(6,"X");
-  const removeFriend=async(friendId)=>{if(!user)return;try{
-    await supabase.from("friendships").delete().match({user_id:user.id,friend_id:friendId});
-    await supabase.from("friendships").delete().match({user_id:friendId,friend_id:user.id});
-    // Regenerate friend code so removed person can't re-add
-    const newCode=genFriendCode();
-    const {error}=await supabase.from("profiles").update({friend_code:newCode}).eq("id",user.id);
-    if(!error)setFriendCode(newCode);
-    setSelFriend(0);await loadFriends();
-  }catch(e){console.warn("[Friends] Remove failed:",e.message);}};
-  useEffect(()=>{loadFriends();},[loadFriends]);
-
-  // Sync performance stats on mount
-  useEffect(()=>{console.log("[Sync trigger] user:",!!user,"history:",history.length);if(user&&history.length)syncPerformanceStats(user.id,history,{...EXERCISE_DB,...customExercises}).then(()=>console.log("[Sync] done")).catch(e=>console.error("[Sync] error:",e));},[user,history.length]);
-  // Sync custom exercises to Supabase
-  useEffect(()=>{console.log("[CustomEx] sync trigger, count:",Object.keys(customExercises).length);if(user&&Object.keys(customExercises).length>0)syncCustomExercises(user.id,customExercises);},[user,customExercises]);
-
-  // Sync all app data to Supabase (debounced)
-  const syncTimerRef=useRef(null);
-  useEffect(()=>{
-    if(!user||!cloudLoaded)return;
-    if(syncTimerRef.current)clearTimeout(syncTimerRef.current);
-    syncTimerRef.current=setTimeout(()=>{
-      const now=Date.now();
-      const appData={
-        programs,
-        history,
-        primaryProgIdx,
-        appearance,
-        customRestTimes,
-        favoriteExercises:[...favoriteExercises],
-        hiddenExercises:[...hiddenExercises],
-        cardioHistory,
-        customCardio,
-        lastModified:now,
-      };
-      localStorage.setItem("gt_last_modified",String(now));
-      syncAppData(user.id,appData);
-    },2000);
-    return()=>{if(syncTimerRef.current)clearTimeout(syncTimerRef.current);};
-  },[user,cloudLoaded,programs,history,primaryProgIdx,appearance,customRestTimes,favoriteExercises,hiddenExercises,cardioHistory,customCardio]);
-
-  // Persist state to localStorage
-  useEffect(()=>{localStorage.setItem("gt_programs",JSON.stringify(programs));},[programs]);
-  useEffect(()=>{localStorage.setItem("gt_history",JSON.stringify(history));},[history]);
-  useEffect(()=>{localStorage.setItem("gt_primary_prog",String(primaryProgIdx));},[primaryProgIdx]);
-  useEffect(()=>{localStorage.setItem("gt_appearance",appearance);},[appearance]);
-  useEffect(()=>{localStorage.setItem("gt_custom_rest",JSON.stringify(customRestTimes));},[customRestTimes]);
-  useEffect(()=>{localStorage.setItem("gt_custom_exercises",JSON.stringify(customExercises));},[customExercises]);
-  useEffect(()=>{localStorage.setItem("gt_favorites",JSON.stringify([...favoriteExercises]));},[favoriteExercises]);
-  useEffect(()=>{localStorage.setItem("gt_friend_info_dismissed",String(friendInfoDismissed));},[friendInfoDismissed]);
-  useEffect(()=>{localStorage.setItem("gt_hidden_exercises",JSON.stringify([...hiddenExercises]));},[hiddenExercises]);
-  useEffect(()=>{localStorage.setItem("gt_cardio_history",JSON.stringify(cardioHistory));},[cardioHistory]);
-  useEffect(()=>{localStorage.setItem("gt_custom_cardio",JSON.stringify(customCardio));},[customCardio]);
-  const fullExDB={...EXERCISE_DB,...customExercises};
-  const getExRest=(name)=>customRestTimes[name]??(isUnplanned?unplannedExercises:exercises).find(e=>e.name===name)?.rest??fullExDB[name]?.rest??90;
-  const EXERCISE_LIST=Object.entries(fullExDB).filter(([name])=>!hiddenExercises.has(name)).map(([name,v])=>({name,muscle:v.muscle,rest:customRestTimes[name]??v.rest})).sort((a,b)=>{const mi=MUSCLE_GROUPS.indexOf(a.muscle),mj=MUSCLE_GROUPS.indexOf(b.muscle);if(mi!==mj)return(mi===-1?99:mi)-(mj===-1?99:mj);return a.name.localeCompare(b.name);});
-
-  const prog=programs[selProgIdx];const split=selSplitIdx!==null?prog?.splits[selSplitIdx]:null;const exercises=split?.exercises||[];const allLoggedEx=[...new Set(history.map(h=>h.exercise))].sort();
-  const allDbExNames=Object.keys(fullExDB);
-  const allProgressEx=[...new Set([...allLoggedEx,...allDbExNames])].sort();
-
-  const addProg=()=>{if(!newProgName.trim())return;setPrograms(p=>[...p,{id:`p${Date.now()}`,name:newProgName.trim(),splits:[]}]);setNewProgName("");setShowAddProg(false);};
-  const delProg=(i)=>{if(programs.length<=1)return;setPrograms(p=>p.filter((_,j)=>j!==i));if(selProgIdx>=i&&selProgIdx>0)setSelProgIdx(selProgIdx-1);if(primaryProgIdx>=i&&primaryProgIdx>0)setPrimaryProgIdx(primaryProgIdx-1);};
-  const addSplit=()=>{if(!newSplitName.trim()||!prog)return;const u=[...programs];u[selProgIdx]={...prog,splits:[...prog.splits,{name:newSplitName.trim(),exercises:[]}]};setPrograms(u);setNewSplitName("");setShowAddSplit(false);};
-  const delSplit=(i)=>{const u=[...programs];u[selProgIdx]={...prog,splits:prog.splits.filter((_,j)=>j!==i)};setPrograms(u);};
-  const addExercise=()=>{if(!newExName.trim()||!split)return;const u=[...programs];const ns=[...prog.splits];const exName=newExName.trim();const rest=fullExDB[exName]?.rest||90;ns[selSplitIdx]={...split,exercises:[...split.exercises,{name:exName,muscle:newExMuscle,sets:3,rest}]};u[selProgIdx]={...prog,splits:ns};setPrograms(u);if(!EXERCISE_DB[exName])setCustomExercises(prev=>({...prev,[exName]:{muscle:newExMuscle,rest}}));setNewExName("");setExSearch("");setShowAddEx(false);};
-  const updateExField=(splitIdx,exIdx,field,value)=>{const u=[...programs];const ns=[...prog.splits];const ne=[...ns[splitIdx].exercises];ne[exIdx]={...ne[exIdx],[field]:value};ns[splitIdx]={...ns[splitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
-  const editSwapExercise=(splitIdx,exIdx,newEx)=>{const u=[...programs];const ns=[...prog.splits];const ne=[...ns[splitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[splitIdx]={...ns[splitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setEditSwapIdx(null);setEditSwapSplit(null);setEditSwapSearch("");};
-  const pickExFromDB=(ex)=>{setNewExName(ex.name);setNewExMuscle(ex.muscle);};
-  const delExercise=(i)=>{const u=[...programs];const ns=[...prog.splits];ns[selSplitIdx]={...split,exercises:split.exercises.filter((_,j)=>j!==i)};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
-  const moveEx=(i,d)=>{const ni=i+d;if(ni<0||ni>=exercises.length)return;const u=[...programs];const ns=[...prog.splits];const ne=[...split.exercises];[ne[i],ne[ni]]=[ne[ni],ne[i]];ns[selSplitIdx]={...split,exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);};
-
-  // Set logging with weight cascade
-  const gk=(ex,si,sub)=>`${ex}__${si}${sub!==undefined?`__${sub}`:""}`;
-  const getS=(ex,si,sub)=>workoutLog[gk(ex,si,sub)]||{weight:"",reps:""};
-  const getType=(ex,si)=>workoutLog[`${ex}__${si}__type`]||"S";
-  const setTypeVal=(ex,si,t)=>setWorkoutLog(l=>({...l,[`${ex}__${si}__type`]:t}));
-  const getEffectiveWeight=(ex,si)=>{const direct=getS(ex,si).weight;if(direct!==""&&direct!==undefined)return direct;if(si>0&&!manuallyEdited[`${ex}__${si}`]){const s0=getS(ex,0).weight;if(s0!==""&&s0!==undefined)return s0;}return "";};
-  const upS=(ex,si,f,v,sub)=>{
-    if(f==="weight"&&si===0&&sub===undefined){const count=getSC(ex);setWorkoutLog(l=>{const u={...l,[gk(ex,0)]:{...(l[gk(ex,0)]||{weight:"",reps:""}),weight:v}};for(let s=1;s<count;s++){if(!manuallyEdited[`${ex}__${s}`])u[gk(ex,s)]={...(l[gk(ex,s)]||{weight:"",reps:""}),weight:v};}return u;});return;}
-    if(f==="weight"&&si>0&&sub===undefined)setManuallyEdited(t=>({...t,[`${ex}__${si}`]:true}));
-    setWorkoutLog(l=>({...l,[gk(ex,si,sub)]:{...(l[gk(ex,si,sub)]||{weight:"",reps:""}),[f]:v}}));
-  };
-  const getSC=(ex)=>setCounts[ex]||(isUnplanned?unplannedExercises:exercises).find(e=>e.name===ex)?.sets||3;const addSC=(ex)=>setSetCounts(s=>({...s,[ex]:(s[ex]||3)+1}));const remSC=(ex)=>{const c=getSC(ex);if(c<=1)return;setSetCounts(s=>({...s,[ex]:c-1}));};
-  const getLastSession=(exName)=>{const e=history.filter(h=>h.exercise===exName);if(!e.length)return null;return[...e].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"))[0];};
-
-  // Rest timer — timestamp-based so it survives app backgrounding
-  const [rStartTime,setRStartTime]=useState(null);
-  const startR=(s,exIdx,setIdx)=>{if(rRef.current)clearInterval(rRef.current);setRTotal(s);setRStartTime(Date.now());setRActive(true);setRAfterEx(exIdx);setRAfterSet(setIdx);};
-  const stopR=useCallback(()=>{if(rRef.current)clearInterval(rRef.current);setRActive(false);setRSecs(0);setRTotal(0);setRStartTime(null);setRAfterEx(null);setRAfterSet(null);},[]);
-  useEffect(()=>{if(rActive&&rStartTime&&rTotal>0){const tick=()=>{const elapsed=Math.floor((Date.now()-rStartTime)/1000);setRSecs(rTotal-elapsed);};tick();rRef.current=setInterval(tick,1000);return()=>clearInterval(rRef.current);}},[rActive,rStartTime,rTotal]);
-
-  // Session timer
-  useEffect(()=>{if(logPhase==="active"&&workoutStart){const id=setInterval(()=>{setSessionElapsed(Math.floor((Date.now()-workoutStart)/1000));},1000);return()=>clearInterval(id);}else{setSessionElapsed(0);}},[logPhase,workoutStart]);
-
-  const [unplannedExercises,setUnplannedExercises]=useState([]);
-  const [showAddWorkoutEx,setShowAddWorkoutEx]=useState(false);
-  const [workoutExSearch,setWorkoutExSearch]=useState("");
-  const isUnplanned=logPhase==="active"&&selSplitIdx===null;
-  const activeExercises=isUnplanned?unplannedExercises:exercises;
-  const startWorkout=(pIdx,sIdx)=>{const pi=pIdx!==undefined?pIdx:selProgIdx;const si=sIdx!==undefined?sIdx:selSplitIdx;if(si===null)return;setSelProgIdx(pi);setSelSplitIdx(si);setLogPhase("active");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setWorkoutStart(Date.now());setUnplannedExercises([]);};
-  const startUnplanned=()=>{setLogPhase("active");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setWorkoutStart(Date.now());setSelSplitIdx(null);setUnplannedExercises([]);};
-  const addWorkoutExercise=(ex)=>{setUnplannedExercises(prev=>[...prev,{name:ex.name,muscle:ex.muscle,sets:3,rest:ex.rest||90}]);setShowAddWorkoutEx(false);setWorkoutExSearch("");};
-  const removeWorkoutExercise=(idx)=>{setUnplannedExercises(prev=>prev.filter((_,i)=>i!==idx));};
-  const cancelWorkout=()=>{setLogPhase("home");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();};
-  const finishWorkout=()=>{const now=new Date();const d=now.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=toLocalISO(now);const entries=[];
-    const exList=isUnplanned?unplannedExercises:exercises;const pName=isUnplanned?"Freestyle":prog.name;const sName=isUnplanned?"Unplanned":split.name;
-    exList.forEach(ex=>{const c=getSC(ex.name);let maxW=0,tR=0,valid=0;const setDetails=[];
-      for(let i=0;i<c;i++){const tp=getType(ex.name,i);if(tp==="D"){const drops=[];for(let dd=0;dd<3;dd++){const s=getS(ex.name,i,dd);const w=parseFloat(s.weight),r=parseInt(s.reps);if(w>0){drops.push({weight:w,reps:r||0});if(w>maxW)maxW=w;if(r>0){tR+=r;valid++;}}}if(drops.length>0)setDetails.push({type:"D",drops});}else{const wVal=getEffectiveWeight(ex.name,i);const s=getS(ex.name,i);const w=parseFloat(wVal),r=parseInt(s.reps);if(w>0&&r>0){if(w>maxW)maxW=w;tR+=r;valid++;setDetails.push({type:tp,weight:w,reps:r});}}}
-      if(valid>0)entries.push({exercise:ex.name,date:d,isoDate:iso,weight:maxW,reps:Math.round(tR/valid),sets:valid,program:pName,split:sName,setDetails});});
-    if(entries.length>0){const topLift=[...entries].sort((a,b)=>b.weight-a.weight)[0];const elapsed=workoutStart?Math.floor((Date.now()-workoutStart)/1000):0;setWorkoutSummary({split:sName,program:pName,entries,topLift,date:d,duration:elapsed});setHistory(h=>{const next=[...h,...entries];if(user)syncPerformanceStats(user.id,next,fullExDB);return next;});setWorkoutLog({});setSetCounts({});setManuallyEdited({});setLogPhase("home");setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();}};
-
-  const confirmSet=(exName,exIdx,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>({...p,[key]:true}));stopR();setTimeout(()=>startR(getExRest(exName),exIdx,setIdx),50);};
-  const unconfirmSet=(exName,setIdx)=>{const key=`${exName}__${setIdx}`;setConfirmedSets(p=>{const next={...p};delete next[key];return next;});if(rAfterSet===setIdx)stopR();};
-  const isSetConfirmed=(exName,setIdx)=>!!confirmedSets[`${exName}__${setIdx}`];
-  const hasLog=Object.values(workoutLog).some(s=>s.weight||s.reps);
-
-  // Swap exercise in active workout
-  const swapExercise=(exIdx,newEx)=>{if(selSplitIdx===null)return;const u=[...programs];const ns=[...prog.splits];const ne=[...ns[selSplitIdx].exercises];const old=ne[exIdx];ne[exIdx]={name:newEx.name,muscle:newEx.muscle,sets:old.sets||3,rest:newEx.rest||old.rest||90};ns[selSplitIdx]={...ns[selSplitIdx],exercises:ne};u[selProgIdx]={...prog,splits:ns};setPrograms(u);setSwappingExIdx(null);setSwapSearch("");};
-  const saveRestTime=(exName,secs)=>{if(secs>0)setCustomRestTimes(p=>({...p,[exName]:secs}));setEditingRestEx(null);setEditingRestVal("");};
-  const changeExMuscle=(exName,newMuscle)=>{setCustomExercises(prev=>({...prev,[exName]:{...(prev[exName]||fullExDB[exName]||{rest:90}),muscle:newMuscle}}));setEditingMuscleEx(null);};
-  const deleteExercise=(exName)=>{if(customExercises[exName]){setCustomExercises(prev=>{const next={...prev};delete next[exName];return next;});}else{setHiddenExercises(prev=>{const next=new Set(prev);next.add(exName);return next;});}setFavoriteExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
-  const restoreExercise=(exName)=>{setHiddenExercises(prev=>{const next=new Set(prev);next.delete(exName);return next;});};
-  const toggleFavorite=(exName)=>{setFavoriteExercises(prev=>{const next=new Set(prev);if(next.has(exName))next.delete(exName);else next.add(exName);return next;});};
-
-  // Cardio functions
-  const allCardioTypes=[...new Set([...CARDIO_DB,...customCardio])].sort();
-  const saveCardioSession=()=>{
-    if(!cardioType.trim())return;
-    const now=new Date();const d=now.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=toLocalISO(now);
-    const dist=parseFloat(cardioDistance)||0;const mins=parseFloat(cardioTime)||0;
-    if(!dist&&!mins)return;
-    const entry={type:cardioType.trim(),date:d,isoDate:iso,distance:dist,unit:cardioDistUnit,time:mins,pace:dist>0&&mins>0?+(mins/dist).toFixed(2):0};
-    // Add to custom cardio DB if new
-    if(!CARDIO_DB.includes(cardioType.trim())&&!customCardio.includes(cardioType.trim())){setCustomCardio(prev=>[...prev,cardioType.trim()]);}
-    setCardioHistory(prev=>[...prev,entry]);
-    setShowCardioLog(false);setCardioType("");setCardioDistance("");setCardioTime("");setCardioSearch("");
-  };
-  const getCardioData=(type,metric)=>cardioHistory.filter(c=>c.type===type).map(c=>({date:c.date,value:metric==="distance"?c.distance:metric==="time"?c.time:c.pace,isoDate:c.isoDate}));
-  const getCardioBest=(type,metric)=>{const entries=cardioHistory.filter(c=>c.type===type&&c[metric]>0);if(!entries.length)return 0;return metric==="pace"?Math.min(...entries.map(e=>e.pace)):Math.max(...entries.map(e=>e[metric]));};
-  const getLastCardio=()=>{if(!cardioHistory.length)return null;const sorted=[...cardioHistory].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"));return sorted[0];};
-
-  const startEditHistory=(entries)=>{setEditingHistory(entries.map(h=>({...h})));};
-  const updateEditEntry=(idx,field,val)=>{setEditingHistory(prev=>prev.map((h,i)=>i===idx?{...h,[field]:field==="weight"?parseFloat(val)||0:field==="reps"||field==="sets"?parseInt(val)||0:val}:h));};
-  const updateEditSetDetail=(entryIdx,setIdx,field,val)=>{setEditingHistory(prev=>prev.map((h,i)=>{if(i!==entryIdx||!h.setDetails)return h;const sd=[...h.setDetails];sd[setIdx]={...sd[setIdx],[field]:field==="weight"?parseFloat(val)||0:parseInt(val)||0};const maxW=Math.max(...sd.filter(s=>s.type!=="D").map(s=>s.weight||0),...sd.filter(s=>s.type==="D").flatMap(s=>(s.drops||[]).map(d=>d.weight||0)),0);const validSets=sd.filter(s=>s.type==="D"?(s.drops||[]).some(d=>d.weight>0):s.weight>0);const totalReps=sd.reduce((sum,s)=>s.type==="D"?sum:sum+(s.reps||0),0);return{...h,setDetails:sd,weight:maxW,sets:validSets.length,reps:validSets.length>0?Math.round(totalReps/validSets.filter(s=>s.type!=="D").length)||0:0};}));};
-  const deleteEditSetDetail=(entryIdx,setIdx)=>{setEditingHistory(prev=>prev.map((h,i)=>{if(i!==entryIdx||!h.setDetails)return h;const sd=h.setDetails.filter((_,j)=>j!==setIdx);if(sd.length===0)return h;const maxW=Math.max(...sd.filter(s=>s.type!=="D").map(s=>s.weight||0),0);const validSets=sd.filter(s=>s.type==="D"?(s.drops||[]).some(d=>d.weight>0):s.weight>0);const totalReps=sd.reduce((sum,s)=>s.type==="D"?sum:sum+(s.reps||0),0);return{...h,setDetails:sd,weight:maxW,sets:validSets.length,reps:validSets.length>0?Math.round(totalReps/validSets.filter(s=>s.type!=="D").length)||0:0};}));};
-  const saveEditHistory=()=>{if(!editingHistory)return;setHistory(prev=>{const updated=[...prev];editingHistory.forEach(edited=>{const idx=updated.findIndex(h=>h.exercise===edited._origExercise&&h.isoDate===edited.isoDate&&h.split===edited.split);if(idx!==-1)updated[idx]={...updated[idx],weight:edited.weight,reps:edited.reps,sets:edited.sets,setDetails:edited.setDetails};});return updated;});setEditingHistory(null);};
-  const deleteHistoryEntry=(idx)=>{if(!editingHistory)return;const entry=editingHistory[idx];setHistory(prev=>prev.filter(h=>!(h.exercise===entry._origExercise&&h.isoDate===entry.isoDate&&h.split===entry.split)));setEditingHistory(prev=>{const next=prev.filter((_,i)=>i!==idx);if(next.length===0){setEditingHistory(null);setCalSelDay(null);}return next.length?next:prev;});if(editingHistory.length<=1){setEditingHistory(null);setCalSelDay(null);}};
-  const getPR=(hist,ex)=>{const e=hist.filter(h=>h.exercise===ex);return e.length?Math.max(...e.map(x=>x.weight)):0;};
-  const getCD=(hist,ex)=>hist.filter(h=>h.exercise===ex).map(h=>({date:h.date,weight:h.weight}));
-
-  // Import/Export
-  const exportPrograms=()=>{const data=JSON.stringify(programs,null,2);const blob=new Blob([data],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="gym-tracker-programs.json";a.click();URL.revokeObjectURL(url);};
-  const handleImportFile=(e)=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=(ev)=>{try{const imp=JSON.parse(ev.target.result);if(Array.isArray(imp)&&imp.length>0){setImportPreview(imp);setImportSelected(new Set(imp.map((_,i)=>i)));setImportError("");}else{setImportError("No valid programs found in file.");}}catch(err){setImportError("Invalid file format.");}};reader.readAsText(file);e.target.value="";};
-  const confirmImport=()=>{if(!importPreview)return;const selected=importPreview.filter((_,i)=>importSelected.has(i));if(!selected.length)return;setPrograms(prev=>[...prev,...selected.map(p=>({...p,id:`p${Date.now()}_${Math.random().toString(36).slice(2,6)}`}))]);setImportPreview(null);setImportSelected(new Set());};
-  const toggleImportItem=(idx)=>{setImportSelected(prev=>{const next=new Set(prev);if(next.has(idx))next.delete(idx);else next.add(idx);return next;});};
-
-  const primaryProg=programs[primaryProgIdx];
-  const getNextSplit=()=>{if(!primaryProg||!primaryProg.splits.length)return null;const ph=history.filter(h=>h.program===primaryProg.name);if(!ph.length)return{splitIdx:0,splitName:primaryProg.splits[0].name};const maxDate=ph.reduce((m,h)=>(h.isoDate||"0")>m?(h.isoDate||"0"):m,"0");const lastDayEntries=ph.filter(h=>h.isoDate===maxDate);const lastSplit=lastDayEntries[lastDayEntries.length-1].split;const li=primaryProg.splits.findIndex(s=>s.name===lastSplit);return{splitIdx:(li+1)%primaryProg.splits.length,splitName:primaryProg.splits[(li+1)%primaryProg.splits.length].name};};
-  const nextSplit=getNextSplit();
-  const getWeekDots=()=>{const sun=getSunday(new Date());const todayIso=toLocalISO(new Date());const dots=[];for(let i=0;i<7;i++){const dt=new Date(sun);dt.setDate(sun.getDate()+i);const iso=toLocalISO(dt);const de=history.filter(h=>h.isoDate===iso);const ce=cardioHistory.filter(c=>c.isoDate===iso);dots.push({day:DOW[i],iso,worked:de.length>0||ce.length>0,program:de.length>0?de[0].program:null,hasCardio:ce.length>0,isToday:iso===todayIso,entries:de,cardioEntries:ce});}return dots;};
-  const weekDots=getWeekDots();
-  const getRecentPRs=()=>{const tw=new Date();tw.setDate(tw.getDate()-14);const twi=toLocalISO(tw);const prs=[];[...new Set(history.map(h=>h.exercise))].forEach(ex=>{const all=history.filter(h=>h.exercise===ex);const recent=all.filter(h=>(h.isoDate||"9")>=twi);const older=all.filter(h=>(h.isoDate||"0")<twi);if(!recent.length)return;const rm=Math.max(...recent.map(h=>h.weight));const om=older.length?Math.max(...older.map(h=>h.weight)):0;if(rm>om&&om>0)prs.push({exercise:ex,weight:rm,prev:om,gain:rm-om,date:recent.find(h=>h.weight===rm)?.date});});return prs;};
-  const recentPRs=getRecentPRs();
-  const getLastWorkout=()=>{if(!history.length)return null;const sorted=[...history].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"));const ld=sorted[0].isoDate;const lday=sorted.filter(h=>h.isoDate===ld);return{date:lday[0].date,split:lday[0].split,program:lday[0].program,exercises:lday,topLift:[...lday].sort((a,b)=>b.weight-a.weight)[0]};};
-  const lastWorkout=getLastWorkout();
-  const getCalDays=()=>{const y=calMonth.getFullYear(),m=calMonth.getMonth();const ld=new Date(y,m+1,0);const sd=new Date(y,m,1).getDay();const days=[];for(let i=0;i<sd;i++)days.push(null);for(let d=1;d<=ld.getDate();d++){const dt=new Date(y,m,d);const iso=toLocalISO(dt);days.push({day:d,iso,entries:history.filter(h=>h.isoDate===iso)});}return days;};
-
-  const SPLIT_COLORS=["#818cf8","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f472b6","#84cc16"];
-  const getSplitColor=(splitName)=>{if(!primaryProg)return SPLIT_COLORS[0];const idx=primaryProg.splits.findIndex(s=>s.name===splitName);return idx>=0?SPLIT_COLORS[idx%SPLIT_COLORS.length]:SPLIT_COLORS[0];};
-  const card={background:t.surface,borderRadius:10,border:`1px solid ${t.border}`};
-  const cardWithLeft=(color)=>({background:t.surface,borderRadius:10,borderTop:`1px solid ${t.border}`,borderRight:`1px solid ${t.border}`,borderBottom:`1px solid ${t.border}`,borderLeft:`3px solid ${color}`});
-  const cardWithTop=(color)=>({background:t.surface,borderRadius:10,borderLeft:`1px solid ${t.border}`,borderRight:`1px solid ${t.border}`,borderBottom:`1px solid ${t.border}`,borderTop:`3px solid ${color}`});
-  const pill=(a,col)=>({padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",border:a?`2px solid ${col}`:"2px solid transparent",background:a?`${col}20`:t.bg,color:a?col:t.textMuted});
-  const rProg=rTotal>0?Math.max(0,1-rSecs/rTotal):0;
-  const isOvertime=rSecs<0;
-
-  // Filtered exercise DB for add-exercise search
-  const filteredExDB=exSearch.trim()?EXERCISE_LIST.filter(e=>e.name.toLowerCase().includes(exSearch.toLowerCase())):[];
-
-  // Set detail rendering helper
-  const renderSetBadges=(details)=>{if(!details||!details.length)return null;return <div style={{display:"flex",gap:2,marginTop:2}}>{details.map((s,i)=>{const col=STL[s.type]?.color||t.textMuted;return <span key={i} style={{fontSize:8,fontWeight:700,color:col,background:`${col}20`,padding:"1px 4px",borderRadius:3}}>{s.type}{s.type==="D"?`×${s.drops?.length||0}`:""}</span>;})}</div>;};
-
-  const RestTimerInline=()=>(
-    <div style={{background:t.restGrad,borderRadius:10,border:`1px solid ${isOvertime?"#ff453a30":t.orange+"30"}`,padding:"10px 14px",margin:"4px 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{fontSize:10,color:isOvertime?t.red:t.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>{isOvertime?"Over":"Rest"}</div>
-        <div style={{fontSize:28,fontWeight:800,color:isOvertime?t.red:t.orange,fontVariantNumeric:"tabular-nums"}}>{fcSigned(rSecs)}</div>
-      </div>
-      <div style={{flex:1,margin:"0 12px"}}><div style={{width:"100%",height:4,background:t.surface,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",borderRadius:4,background:isOvertime?`linear-gradient(90deg,${t.red},${t.orange})`:`linear-gradient(90deg,${t.orange},${t.red})`,width:`${Math.min(rProg*100,100)}%`,transition:"width 1s linear"}}/></div></div>
-      <button onClick={stopR} style={{padding:"5px 14px",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:isOvertime?t.red:t.textSec,fontWeight:600,fontSize:11,cursor:"pointer"}}>{isOvertime?"End Rest":"Skip"}</button>
-    </div>
+  const EXERCISE_LIST = useMemo(() =>
+    Object.entries(fullExDB)
+      .filter(([name]) => !hiddenExercises.has(name))
+      .map(([name, v]) => ({ name, muscle: v.muscle, rest: customRestTimes[name] ?? v.rest }))
+      .sort((a, b) => {
+        const mi = MUSCLE_GROUPS.indexOf(a.muscle), mj = MUSCLE_GROUPS.indexOf(b.muscle);
+        if (mi !== mj) return (mi === -1 ? 99 : mi) - (mj === -1 ? 99 : mj);
+        return a.name.localeCompare(b.name);
+      }),
+    [fullExDB, hiddenExercises, customRestTimes]
   );
+
+  const prog = programs[selProgIdx];
+  const split = selSplitIdx !== null ? prog?.splits[selSplitIdx] : null;
+  const exercises = split?.exercises || [];
+
+  const allProgressEx = useMemo(() => {
+    const allLoggedEx = [...new Set(history.map(h => h.exercise))].sort();
+    const allDbExNames = Object.keys(fullExDB);
+    return [...new Set([...allLoggedEx, ...allDbExNames])].sort();
+  }, [history, fullExDB]);
+
+  const [unplannedExercises, setUnplannedExercises] = useState([]);
+  const [showAddWorkoutEx, setShowAddWorkoutEx] = useState(false);
+  const [workoutExSearch, setWorkoutExSearch] = useState("");
+  const isUnplanned = logPhase === "active" && selSplitIdx === null;
+  const activeExercises = isUnplanned ? unplannedExercises : exercises;
+
+  const getExRest = useCallback((name) =>
+    customRestTimes[name] ?? (isUnplanned ? unplannedExercises : exercises).find(e => e.name === name)?.rest ?? fullExDB[name]?.rest ?? 90,
+    [customRestTimes, isUnplanned, unplannedExercises, exercises, fullExDB]
+  );
+
+  const filteredExDB = useMemo(() =>
+    exSearch.trim() ? EXERCISE_LIST.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase())) : [],
+    [exSearch, EXERCISE_LIST]
+  );
+
+  // ─── Program CRUD ───────────────────────────
+  const addProg = () => { if (!newProgName.trim()) return; setPrograms(p => [...p, { id: `p${Date.now()}`, name: newProgName.trim(), splits: [] }]); setNewProgName(""); setShowAddProg(false); };
+  const delProg = (i) => { if (programs.length <= 1) return; setPrograms(p => p.filter((_, j) => j !== i)); if (selProgIdx >= i && selProgIdx > 0) setSelProgIdx(selProgIdx - 1); if (primaryProgIdx >= i && primaryProgIdx > 0) setPrimaryProgIdx(primaryProgIdx - 1); };
+  const addSplit = () => { if (!newSplitName.trim() || !prog) return; const u = [...programs]; u[selProgIdx] = {...prog, splits: [...prog.splits, { name: newSplitName.trim(), exercises: [] }]}; setPrograms(u); setNewSplitName(""); setShowAddSplit(false); };
+  const delSplit = (i) => { const u = [...programs]; u[selProgIdx] = {...prog, splits: prog.splits.filter((_, j) => j !== i)}; setPrograms(u); };
+  const addExercise = () => { if (!newExName.trim() || !split) return; const u = [...programs]; const ns = [...prog.splits]; const exName = newExName.trim(); const rest = fullExDB[exName]?.rest || 90; ns[selSplitIdx] = {...split, exercises: [...split.exercises, { name: exName, muscle: newExMuscle, sets: 3, rest }]}; u[selProgIdx] = {...prog, splits: ns}; setPrograms(u); if (!EXERCISE_DB[exName]) setCustomExercises(prev => ({...prev, [exName]: { muscle: newExMuscle, rest }})); setNewExName(""); setExSearch(""); setShowAddEx(false); };
+  const updateExField = (splitIdx, exIdx, field, value) => { const u = [...programs]; const ns = [...prog.splits]; const ne = [...ns[splitIdx].exercises]; ne[exIdx] = {...ne[exIdx], [field]: value}; ns[splitIdx] = {...ns[splitIdx], exercises: ne}; u[selProgIdx] = {...prog, splits: ns}; setPrograms(u); };
+  const editSwapExercise = (splitIdx, exIdx, newEx) => { const u = [...programs]; const ns = [...prog.splits]; const ne = [...ns[splitIdx].exercises]; const old = ne[exIdx]; ne[exIdx] = { name: newEx.name, muscle: newEx.muscle, sets: old.sets || 3, rest: newEx.rest || old.rest || 90 }; ns[splitIdx] = {...ns[splitIdx], exercises: ne}; u[selProgIdx] = {...prog, splits: ns}; setPrograms(u); setEditSwapIdx(null); setEditSwapSplit(null); setEditSwapSearch(""); };
+  const pickExFromDB = (ex) => { setNewExName(ex.name); setNewExMuscle(ex.muscle); };
+  const delExercise = (i) => { const u = [...programs]; const ns = [...prog.splits]; ns[selSplitIdx] = {...split, exercises: split.exercises.filter((_, j) => j !== i)}; u[selProgIdx] = {...prog, splits: ns}; setPrograms(u); };
+  const moveEx = (i, d) => { const ni = i + d; if (ni < 0 || ni >= exercises.length) return; const u = [...programs]; const ns = [...prog.splits]; const ne = [...split.exercises]; [ne[i], ne[ni]] = [ne[ni], ne[i]]; ns[selSplitIdx] = {...split, exercises: ne}; u[selProgIdx] = {...prog, splits: ns}; setPrograms(u); };
+
+  // ─── Set Logging ────────────────────────────
+  const gk = (ex, si, sub) => `${ex}__${si}${sub !== undefined ? `__${sub}` : ""}`;
+  const getS = (ex, si, sub) => workoutLog[gk(ex, si, sub)] || { weight: "", reps: "" };
+  const getType = (ex, si) => workoutLog[`${ex}__${si}__type`] || "S";
+  const setTypeVal = (ex, si, t) => setWorkoutLog(l => ({...l, [`${ex}__${si}__type`]: t}));
+  const getEffectiveWeight = (ex, si) => { const direct = getS(ex, si).weight; if (direct !== "" && direct !== undefined) return direct; if (si > 0 && !manuallyEdited[`${ex}__${si}`]) { const s0 = getS(ex, 0).weight; if (s0 !== "" && s0 !== undefined) return s0; } return ""; };
+  const upS = (ex, si, f, v, sub) => {
+    if (f === "weight" && si === 0 && sub === undefined) { const count = getSC(ex); setWorkoutLog(l => { const u = {...l, [gk(ex, 0)]: {...(l[gk(ex, 0)] || { weight: "", reps: "" }), weight: v}}; for (let s = 1; s < count; s++) { if (!manuallyEdited[`${ex}__${s}`]) u[gk(ex, s)] = {...(l[gk(ex, s)] || { weight: "", reps: "" }), weight: v}; } return u; }); return; }
+    if (f === "weight" && si > 0 && sub === undefined) setManuallyEdited(t => ({...t, [`${ex}__${si}`]: true}));
+    setWorkoutLog(l => ({...l, [gk(ex, si, sub)]: {...(l[gk(ex, si, sub)] || { weight: "", reps: "" }), [f]: v}}));
+  };
+  const getSC = (ex) => setCounts[ex] || (isUnplanned ? unplannedExercises : exercises).find(e => e.name === ex)?.sets || 3;
+  const addSC = (ex) => setSetCounts(s => ({...s, [ex]: (s[ex] || 3) + 1}));
+  const remSC = (ex) => { const c = getSC(ex); if (c <= 1) return; setSetCounts(s => ({...s, [ex]: c - 1})); };
+  const getLastSession = useCallback((exName) => { const e = history.filter(h => h.exercise === exName); if (!e.length) return null; return [...e].sort((a, b) => (b.isoDate || "0").localeCompare(a.isoDate || "0"))[0]; }, [history]);
+
+  // ─── Session Timer ──────────────────────────
+  useEffect(() => {
+    if (logPhase === "active" && workoutStart) {
+      const id = setInterval(() => { setSessionElapsed(Math.floor((Date.now() - workoutStart) / 1000)); }, 1000);
+      return () => clearInterval(id);
+    } else { setSessionElapsed(0); }
+  }, [logPhase, workoutStart]);
+
+  // ─── Workout Flow ───────────────────────────
+  const startWorkout = (pIdx, sIdx) => { const pi = pIdx !== undefined ? pIdx : selProgIdx; const si = sIdx !== undefined ? sIdx : selSplitIdx; if (si === null) return; setSelProgIdx(pi); setSelSplitIdx(si); setLogPhase("active"); setWorkoutLog({}); setSetCounts({}); setManuallyEdited({}); setConfirmedSets({}); setWorkoutStart(Date.now()); setUnplannedExercises([]); };
+  const startUnplanned = () => { setLogPhase("active"); setWorkoutLog({}); setSetCounts({}); setManuallyEdited({}); setConfirmedSets({}); setWorkoutStart(Date.now()); setSelSplitIdx(null); setUnplannedExercises([]); };
+  const addWorkoutExercise = (ex) => { setUnplannedExercises(prev => [...prev, { name: ex.name, muscle: ex.muscle, sets: 3, rest: ex.rest || 90 }]); setShowAddWorkoutEx(false); setWorkoutExSearch(""); };
+  const removeWorkoutExercise = (idx) => { setUnplannedExercises(prev => prev.filter((_, i) => i !== idx)); };
+  const cancelWorkout = () => { setLogPhase("home"); setWorkoutLog({}); setSetCounts({}); setManuallyEdited({}); setConfirmedSets({}); setSelSplitIdx(null); setWorkoutStart(null); setUnplannedExercises([]); stopR(); };
+
+  const finishWorkout = () => {
+    const now = new Date(); const d = now.toLocaleDateString("en-US", { month: "short", day: "numeric" }); const iso = toLocalISO(now); const entries = [];
+    const exList = isUnplanned ? unplannedExercises : exercises; const pName = isUnplanned ? "Freestyle" : prog.name; const sName = isUnplanned ? "Unplanned" : split.name;
+    exList.forEach(ex => { const c = getSC(ex.name); let maxW = 0, tR = 0, valid = 0; const setDetails = [];
+      for (let i = 0; i < c; i++) { const tp = getType(ex.name, i); if (tp === "D") { const drops = []; for (let dd = 0; dd < 3; dd++) { const s = getS(ex.name, i, dd); const w = parseFloat(s.weight), r = parseInt(s.reps); if (w > 0) { drops.push({ weight: w, reps: r || 0 }); if (w > maxW) maxW = w; if (r > 0) { tR += r; valid++; } } } if (drops.length > 0) setDetails.push({ type: "D", drops }); } else { const wVal = getEffectiveWeight(ex.name, i); const s = getS(ex.name, i); const w = parseFloat(wVal), r = parseInt(s.reps); if (w > 0 && r > 0) { if (w > maxW) maxW = w; tR += r; valid++; setDetails.push({ type: tp, weight: w, reps: r }); } } }
+      if (valid > 0) entries.push({ exercise: ex.name, date: d, isoDate: iso, weight: maxW, reps: Math.round(tR / valid), sets: valid, program: pName, split: sName, setDetails });
+    });
+    if (entries.length > 0) {
+      const topLift = [...entries].sort((a, b) => b.weight - a.weight)[0];
+      const elapsed = workoutStart ? Math.floor((Date.now() - workoutStart) / 1000) : 0;
+      setWorkoutSummary({ split: sName, program: pName, entries, topLift, date: d, duration: elapsed });
+      setHistory(h => { const next = [...h, ...entries]; if (user) syncPerformanceStats(user.id, next, fullExDB); return next; });
+      setWorkoutLog({}); setSetCounts({}); setManuallyEdited({}); setLogPhase("home"); setSelSplitIdx(null); setWorkoutStart(null); setUnplannedExercises([]); stopR();
+    }
+  };
+
+  const confirmSet = (exName, exIdx, setIdx) => { const key = `${exName}__${setIdx}`; setConfirmedSets(p => ({...p, [key]: true})); stopR(); setTimeout(() => startR(getExRest(exName), exIdx, setIdx), 50); };
+  const unconfirmSet = (exName, setIdx) => { const key = `${exName}__${setIdx}`; setConfirmedSets(p => { const next = {...p}; delete next[key]; return next; }); if (rAfterSet === setIdx) stopR(); };
+  const isSetConfirmed = (exName, setIdx) => !!confirmedSets[`${exName}__${setIdx}`];
+  const hasLog = Object.values(workoutLog).some(s => s.weight || s.reps);
+
+  const swapExercise = (exIdx, newEx) => { if (selSplitIdx === null) return; const u = [...programs]; const ns = [...prog.splits]; const ne = [...ns[selSplitIdx].exercises]; const old = ne[exIdx]; ne[exIdx] = { name: newEx.name, muscle: newEx.muscle, sets: old.sets || 3, rest: newEx.rest || old.rest || 90 }; ns[selSplitIdx] = {...ns[selSplitIdx], exercises: ne}; u[selProgIdx] = {...prog, splits: ns}; setPrograms(u); setSwappingExIdx(null); setSwapSearch(""); };
+  const saveRestTime = (exName, secs) => { if (secs > 0) setCustomRestTimes(p => ({...p, [exName]: secs})); setEditingRestEx(null); setEditingRestVal(""); };
+  const changeExMuscle = (exName, newMuscle) => { setCustomExercises(prev => ({...prev, [exName]: {...(prev[exName] || fullExDB[exName] || { rest: 90 }), muscle: newMuscle}})); setEditingMuscleEx(null); };
+  const deleteExercise = (exName) => { if (customExercises[exName]) { setCustomExercises(prev => { const next = {...prev}; delete next[exName]; return next; }); } else { setHiddenExercises(prev => { const next = new Set(prev); next.add(exName); return next; }); } setFavoriteExercises(prev => { const next = new Set(prev); next.delete(exName); return next; }); };
+  const restoreExercise = (exName) => { setHiddenExercises(prev => { const next = new Set(prev); next.delete(exName); return next; }); };
+  const toggleFavorite = (exName) => { setFavoriteExercises(prev => { const next = new Set(prev); if (next.has(exName)) next.delete(exName); else next.add(exName); return next; }); };
+
+  // ─── History Editing ────────────────────────
+  const startEditHistory = (entries) => { setEditingHistory(entries.map(h => ({...h}))); };
+  const updateEditEntry = (idx, field, val) => { setEditingHistory(prev => prev.map((h, i) => i === idx ? {...h, [field]: field === "weight" ? parseFloat(val) || 0 : field === "reps" || field === "sets" ? parseInt(val) || 0 : val} : h)); };
+  const updateEditSetDetail = (entryIdx, setIdx, field, val) => { setEditingHistory(prev => prev.map((h, i) => { if (i !== entryIdx || !h.setDetails) return h; const sd = [...h.setDetails]; sd[setIdx] = {...sd[setIdx], [field]: field === "weight" ? parseFloat(val) || 0 : parseInt(val) || 0}; const maxW = Math.max(...sd.filter(s => s.type !== "D").map(s => s.weight || 0), ...sd.filter(s => s.type === "D").flatMap(s => (s.drops || []).map(d => d.weight || 0)), 0); const validSets = sd.filter(s => s.type === "D" ? (s.drops || []).some(d => d.weight > 0) : s.weight > 0); const totalReps = sd.reduce((sum, s) => s.type === "D" ? sum : sum + (s.reps || 0), 0); return {...h, setDetails: sd, weight: maxW, sets: validSets.length, reps: validSets.length > 0 ? Math.round(totalReps / validSets.filter(s => s.type !== "D").length) || 0 : 0}; })); };
+  const deleteEditSetDetail = (entryIdx, setIdx) => { setEditingHistory(prev => prev.map((h, i) => { if (i !== entryIdx || !h.setDetails) return h; const sd = h.setDetails.filter((_, j) => j !== setIdx); if (sd.length === 0) return h; const maxW = Math.max(...sd.filter(s => s.type !== "D").map(s => s.weight || 0), 0); const validSets = sd.filter(s => s.type === "D" ? (s.drops || []).some(d => d.weight > 0) : s.weight > 0); const totalReps = sd.reduce((sum, s) => s.type === "D" ? sum : sum + (s.reps || 0), 0); return {...h, setDetails: sd, weight: maxW, sets: validSets.length, reps: validSets.length > 0 ? Math.round(totalReps / validSets.filter(s => s.type !== "D").length) || 0 : 0}; })); };
+  const saveEditHistory = () => { if (!editingHistory) return; setHistory(prev => { const updated = [...prev]; editingHistory.forEach(edited => { const idx = updated.findIndex(h => h.exercise === edited._origExercise && h.isoDate === edited.isoDate && h.split === edited.split); if (idx !== -1) updated[idx] = {...updated[idx], weight: edited.weight, reps: edited.reps, sets: edited.sets, setDetails: edited.setDetails}; }); return updated; }); setEditingHistory(null); };
+  const deleteHistoryEntry = (idx) => { if (!editingHistory) return; const entry = editingHistory[idx]; setHistory(prev => prev.filter(h => !(h.exercise === entry._origExercise && h.isoDate === entry.isoDate && h.split === entry.split))); setEditingHistory(prev => { const next = prev.filter((_, i) => i !== idx); if (next.length === 0) { setEditingHistory(null); setCalSelDay(null); } return next.length ? next : prev; }); if (editingHistory.length <= 1) { setEditingHistory(null); setCalSelDay(null); } };
+
+  // ─── Import/Export ──────────────────────────
+  const exportPrograms = () => { const data = JSON.stringify(programs, null, 2); const blob = new Blob([data], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "gym-tracker-programs.json"; a.click(); URL.revokeObjectURL(url); };
+  const handleImportFile = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (ev) => { try { const imp = JSON.parse(ev.target.result); if (Array.isArray(imp) && imp.length > 0) { setImportPreview(imp); setImportSelected(new Set(imp.map((_, i) => i))); setImportError(""); } else { setImportError("No valid programs found in file."); } } catch (err) { setImportError("Invalid file format."); } }; reader.readAsText(file); e.target.value = ""; };
+  const confirmImport = () => { if (!importPreview) return; const selected = importPreview.filter((_, i) => importSelected.has(i)); if (!selected.length) return; setPrograms(prev => [...prev, ...selected.map(p => ({...p, id: `p${Date.now()}_${Math.random().toString(36).slice(2, 6)}`}))]); setImportPreview(null); setImportSelected(new Set()); };
+  const toggleImportItem = (idx) => { setImportSelected(prev => { const next = new Set(prev); if (next.has(idx)) next.delete(idx); else next.add(idx); return next; }); };
+
+  // ─── Memoized Computations ──────────────────
+  const primaryProg = programs[primaryProgIdx];
+
+  const nextSplit = useMemo(() => {
+    if (!primaryProg || !primaryProg.splits.length) return null;
+    const ph = history.filter(h => h.program === primaryProg.name);
+    if (!ph.length) return { splitIdx: 0, splitName: primaryProg.splits[0].name };
+    const maxDate = ph.reduce((m, h) => (h.isoDate || "0") > m ? (h.isoDate || "0") : m, "0");
+    const lastDayEntries = ph.filter(h => h.isoDate === maxDate);
+    const lastSplit = lastDayEntries[lastDayEntries.length - 1].split;
+    const li = primaryProg.splits.findIndex(s => s.name === lastSplit);
+    return { splitIdx: (li + 1) % primaryProg.splits.length, splitName: primaryProg.splits[(li + 1) % primaryProg.splits.length].name };
+  }, [primaryProg, history]);
+
+  const weekDots = useMemo(() => {
+    const sun = getSunday(new Date()); const todayIso = toLocalISO(new Date()); const dots = [];
+    for (let i = 0; i < 7; i++) {
+      const dt = new Date(sun); dt.setDate(sun.getDate() + i); const iso = toLocalISO(dt);
+      const de = history.filter(h => h.isoDate === iso); const ce = cardioHistory.filter(c => c.isoDate === iso);
+      dots.push({ day: DOW[i], iso, worked: de.length > 0 || ce.length > 0, program: de.length > 0 ? de[0].program : null, hasCardio: ce.length > 0, isToday: iso === todayIso, entries: de, cardioEntries: ce });
+    }
+    return dots;
+  }, [history, cardioHistory]);
+
+  const recentPRs = useMemo(() => {
+    const tw = new Date(); tw.setDate(tw.getDate() - 14); const twi = toLocalISO(tw); const prs = [];
+    [...new Set(history.map(h => h.exercise))].forEach(ex => {
+      const all = history.filter(h => h.exercise === ex); const recent = all.filter(h => (h.isoDate || "9") >= twi); const older = all.filter(h => (h.isoDate || "0") < twi);
+      if (!recent.length) return; const rm = Math.max(...recent.map(h => h.weight)); const om = older.length ? Math.max(...older.map(h => h.weight)) : 0;
+      if (rm > om && om > 0) prs.push({ exercise: ex, weight: rm, prev: om, gain: rm - om, date: recent.find(h => h.weight === rm)?.date });
+    });
+    return prs;
+  }, [history]);
+
+  const lastWorkout = useMemo(() => {
+    if (!history.length) return null;
+    const sorted = [...history].sort((a, b) => (b.isoDate || "0").localeCompare(a.isoDate || "0"));
+    const ld = sorted[0].isoDate; const lday = sorted.filter(h => h.isoDate === ld);
+    return { date: lday[0].date, split: lday[0].split, program: lday[0].program, exercises: lday, topLift: [...lday].sort((a, b) => b.weight - a.weight)[0] };
+  }, [history]);
+
+  const calDays = useMemo(() => {
+    const y = calMonth.getFullYear(), m = calMonth.getMonth(); const ld = new Date(y, m + 1, 0); const sd = new Date(y, m, 1).getDay(); const days = [];
+    for (let i = 0; i < sd; i++) days.push(null);
+    for (let d = 1; d <= ld.getDate(); d++) { const dt = new Date(y, m, d); const iso = toLocalISO(dt); days.push({ day: d, iso, entries: history.filter(h => h.isoDate === iso) }); }
+    return days;
+  }, [calMonth, history]);
+
+  // ─── Style Helpers (stable refs) ────────────
+  const getSplitColor = useCallback((splitName) => {
+    if (!primaryProg) return SPLIT_COLORS[0];
+    const idx = primaryProg.splits.findIndex(s => s.name === splitName);
+    return idx >= 0 ? SPLIT_COLORS[idx % SPLIT_COLORS.length] : SPLIT_COLORS[0];
+  }, [primaryProg]);
+
+  const card = useMemo(() => ({ background: t.surface, borderRadius: 10, border: `1px solid ${t.border}` }), [t]);
+  const cardWithLeft = useCallback((color) => ({ background: t.surface, borderRadius: 10, borderTop: `1px solid ${t.border}`, borderRight: `1px solid ${t.border}`, borderBottom: `1px solid ${t.border}`, borderLeft: `3px solid ${color}` }), [t]);
+  const cardWithTop = useCallback((color) => ({ background: t.surface, borderRadius: 10, borderLeft: `1px solid ${t.border}`, borderRight: `1px solid ${t.border}`, borderBottom: `1px solid ${t.border}`, borderTop: `3px solid ${color}` }), [t]);
+  const pill = useCallback((a, col) => ({ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: a ? `2px solid ${col}` : "2px solid transparent", background: a ? `${col}20` : t.bg, color: a ? col : t.textMuted }), [t]);
+
+  const renderSetBadges = useCallback((details) => {
+    if (!details || !details.length) return null;
+    return <div style={{display:"flex",gap:2,marginTop:2}}>{details.map((s,i) => { const col = STL[s.type]?.color || t.textMuted; return <span key={i} style={{fontSize:8,fontWeight:700,color:col,background:`${col}20`,padding:"1px 4px",borderRadius:3}}>{s.type}{s.type==="D"?`×${s.drops?.length||0}`:""}</span>; })}</div>;
+  }, [t]);
+
+  const RestTimerInline = useMemo(() => {
+    if (!rActive) return null;
+    return (
+      <div style={{background:t.restGrad,borderRadius:10,border:`1px solid ${isOvertime?"#ff453a30":t.orange+"30"}`,padding:"10px 14px",margin:"4px 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{fontSize:10,color:isOvertime?t.red:t.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>{isOvertime?"Over":"Rest"}</div>
+          <div style={{fontSize:28,fontWeight:800,color:isOvertime?t.red:t.orange,fontVariantNumeric:"tabular-nums"}}>{fcSigned(rSecs)}</div>
+        </div>
+        <div style={{flex:1,margin:"0 12px"}}><div style={{width:"100%",height:4,background:t.surface,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",borderRadius:4,background:isOvertime?`linear-gradient(90deg,${t.red},${t.orange})`:`linear-gradient(90deg,${t.orange},${t.red})`,width:`${Math.min(rProg*100,100)}%`,transition:"width 1s linear"}}/></div></div>
+        <button onClick={stopR} style={{padding:"5px 14px",borderRadius:6,border:`1px solid ${t.border}`,background:"transparent",color:isOvertime?t.red:t.textSec,fontWeight:600,fontSize:11,cursor:"pointer"}}>{isOvertime?"End Rest":"Skip"}</button>
+      </div>
+    );
+  }, [rActive, rSecs, rProg, isOvertime, t, stopR]);
 
   return(
     <div style={{minHeight:"100vh",background:t.bg,color:t.textDim,fontFamily:"system-ui,-apple-system,sans-serif",WebkitTextSizeAdjust:"100%",overflowX:"hidden"}}>
@@ -485,7 +420,6 @@ export default function GymTracker({ user, signOut }){
                 <div style={{fontSize:14,fontWeight:700,color:t.text}}>🏃 Log Cardio</div>
                 <button onClick={()=>{setShowCardioLog(false);setCardioType("");setCardioDistance("");setCardioTime("");setCardioSearch("");}} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:16,padding:4}}>×</button>
               </div>
-              {/* Type selector */}
               <div style={{fontSize:9,color:t.textMuted,fontWeight:600,textTransform:"uppercase",marginBottom:4}}>Type</div>
               <select value={cardioType} onChange={e=>setCardioType(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${cardioType?CARDIO_COLOR:t.border}`,background:cardioType?`${CARDIO_COLOR}10`:t.inputBg,color:cardioType?CARDIO_COLOR:t.textMuted,fontSize:13,fontWeight:600,outline:"none",marginBottom:6,boxSizing:"border-box",WebkitAppearance:"auto"}}>
                 <option value="">Select cardio type...</option>
@@ -495,7 +429,6 @@ export default function GymTracker({ user, signOut }){
                 <input value={cardioSearch} onChange={e=>setCardioSearch(e.target.value)} placeholder="Or type a custom activity..." style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:12,outline:"none",boxSizing:"border-box"}}/>
                 {cardioSearch.trim()&&!allCardioTypes.some(c=>c.toLowerCase()===cardioSearch.toLowerCase())&&<button onClick={()=>{setCardioType(cardioSearch.trim());setCardioSearch("");}} style={{padding:"8px 12px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",border:`1px solid ${CARDIO_COLOR}`,background:`${CARDIO_COLOR}15`,color:CARDIO_COLOR,whiteSpace:"nowrap",flexShrink:0}}>+ Add</button>}
               </div>
-              {/* Distance + Time inputs */}
               <div style={{display:"flex",gap:8,marginBottom:10}}>
                 <div style={{flex:1}}>
                   <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:3,textTransform:"uppercase"}}>Distance</div>
@@ -511,7 +444,6 @@ export default function GymTracker({ user, signOut }){
                   <input value={cardioTime} onChange={e=>setCardioTime(e.target.value.replace(/[^\d.]/g,""))} inputMode="decimal" placeholder="0" style={{width:"100%",padding:"10px 6px",borderRadius:8,border:`1px solid ${t.border}`,background:t.inputBg,color:t.text,fontSize:18,fontWeight:700,outline:"none",textAlign:"center",boxSizing:"border-box"}}/>
                 </div>
               </div>
-              {/* Pace preview */}
               {cardioDistance&&cardioTime&&parseFloat(cardioDistance)>0&&parseFloat(cardioTime)>0&&<div style={{padding:"5px 10px",background:`${CARDIO_COLOR}10`,borderRadius:8,marginBottom:10,textAlign:"center"}}><span style={{fontSize:10,color:t.textMuted}}>Pace: </span><span style={{fontSize:13,fontWeight:700,color:CARDIO_COLOR}}>{(parseFloat(cardioTime)/parseFloat(cardioDistance)).toFixed(2)} min/{cardioDistUnit}</span></div>}
               <button onClick={saveCardioSession} style={{width:"100%",padding:12,borderRadius:10,border:"none",background:`linear-gradient(135deg,${CARDIO_COLOR},${CARDIO_COLOR}cc)`,color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>Save Cardio</button>
             </div>}
@@ -532,7 +464,6 @@ export default function GymTracker({ user, signOut }){
                       <div style={{display:"flex",flexDirection:"column",gap:2}}><button onClick={()=>{setSelSplitIdx(si);moveEx(ei,-1);}} disabled={ei===0} style={{background:"none",border:"none",color:ei===0?t.border:t.textMuted,fontSize:14,padding:"2px 4px",cursor:ei===0?"default":"pointer",lineHeight:1}}>▲</button><button onClick={()=>{setSelSplitIdx(si);moveEx(ei,1);}} disabled={ei===s.exercises.length-1} style={{background:"none",border:"none",color:ei===s.exercises.length-1?t.border:t.textMuted,fontSize:14,padding:"2px 4px",cursor:ei===s.exercises.length-1?"default":"pointer",lineHeight:1}}>▼</button></div>
                       <button onClick={()=>{setSelSplitIdx(si);delExercise(ei);}} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:18,padding:"2px 4px"}}>×</button>
                     </div>
-                    {/* Swap picker */}
                     {isSwapping&&<div style={{marginBottom:6,padding:10,background:t.bg,borderRadius:10,border:`1px solid ${t.border}`}}>
                       <div style={{fontSize:10,color:t.textMuted,fontWeight:600,marginBottom:6}}>SWAP WITH</div>
                       <input value={editSwapSearch} onChange={e=>setEditSwapSearch(e.target.value)} placeholder="Search exercises..." autoFocus style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${t.border}`,background:t.surface,color:t.text,fontSize:14,outline:"none",marginBottom:6,boxSizing:"border-box"}}/>
@@ -542,7 +473,6 @@ export default function GymTracker({ user, signOut }){
                       </div>
                       <button onClick={()=>{setEditSwapIdx(null);setEditSwapSplit(null);setEditSwapSearch("");}} style={{marginTop:6,width:"100%",padding:"8px 0",borderRadius:8,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:12,cursor:"pointer"}}>Cancel</button>
                     </div>}
-                    {/* Sets & Rest controls */}
                     {!isSwapping&&<div style={{display:"flex",gap:12,alignItems:"center"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <span style={{fontSize:10,color:t.textMuted,fontWeight:600}}>SETS</span>
@@ -651,7 +581,6 @@ export default function GymTracker({ user, signOut }){
             <div style={{fontSize:12,fontWeight:700,color:t.text}}>{isUnplanned?"Freestyle — Unplanned":`${prog?.name} — ${split?.name}`}</div>
             <button onClick={cancelWorkout} style={{background:"none",border:"none",color:t.red,fontSize:10,fontWeight:600,cursor:"pointer"}}>Cancel</button>
           </div>
-          {/* Session timer */}
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12,padding:"6px 10px",background:t.surface,borderRadius:8,border:`1px solid ${t.border}`}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:isUnplanned?t.orange:t.green,boxShadow:`0 0 4px ${isUnplanned?t.orange:t.green}66`}}/>
             <span style={{fontSize:10,color:t.textMuted,fontWeight:600}}>SESSION</span>
@@ -666,7 +595,6 @@ export default function GymTracker({ user, signOut }){
                     <div><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:13,fontWeight:600,color:t.text}}>{ex.name}</span><button onClick={()=>{setSwappingExIdx(swappingExIdx===exIdx?null:exIdx);setSwapSearch("");}} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center"}} title="Swap exercise"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={t.textFaint} strokeWidth="2" strokeLinecap="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg></button></div><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:9,fontWeight:700,color:mc,textTransform:"uppercase"}}>{ex.muscle}</span><span style={{fontSize:8,color:t.textFaint}}>Rest: {fc(restTime)}</span></div></div>
                     {getPR(history,ex.name)>0&&<div style={{fontSize:9,color:t.yellow,fontWeight:700,background:t.yellowBg,padding:"2px 6px",borderRadius:6}}>PR: {getPR(history,ex.name)}lbs</div>}
                   </div>
-                  {/* Swap exercise picker */}
                   {swappingExIdx===exIdx&&<div style={{marginBottom:6,padding:8,background:t.bg,borderRadius:8,border:`1px solid ${t.border}`}}>
                     <div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:4}}>SWAP WITH</div>
                     <input value={swapSearch} onChange={e=>setSwapSearch(e.target.value)} placeholder="Search exercises..." autoFocus style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${t.border}`,background:t.surface,color:t.text,fontSize:13,outline:"none",marginBottom:4,boxSizing:"border-box"}}/>
@@ -698,7 +626,7 @@ export default function GymTracker({ user, signOut }){
                         {tp==="M"&&si===0&&<div style={{fontSize:8,color:t.red,marginLeft:46,marginTop:1}}>Activation set</div>}
                         {tp==="M"&&si>0&&<div style={{fontSize:8,color:t.red,marginLeft:46,marginTop:1}}>Myo rep {si}</div>}
                       </div>
-                      {rActive&&rAfterEx===exIdx&&rAfterSet===si&&si<count-1&&<RestTimerInline/>}
+                      {rActive&&rAfterEx===exIdx&&rAfterSet===si&&si<count-1&&RestTimerInline}
                     </div>);
                   })}
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:5}}>
@@ -706,11 +634,10 @@ export default function GymTracker({ user, signOut }){
                   </div>
                 </div>
               </div>
-              {rActive&&rAfterEx===exIdx&&rAfterSet===count-1&&<div style={{margin:"3px 0"}}><RestTimerInline/></div>}
+              {rActive&&rAfterEx===exIdx&&rAfterSet===count-1&&<div style={{margin:"3px 0"}}>{RestTimerInline}</div>}
               <div style={{height:8}}/>
             </div>);
           })}
-          {/* Add exercise button (always for unplanned, or as extra for planned) */}
           {!showAddWorkoutEx?<button onClick={()=>{setShowAddWorkoutEx(true);setWorkoutExSearch("");}} style={{width:"100%",padding:12,borderRadius:10,border:`2px dashed ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:13,cursor:"pointer",marginTop:4,marginBottom:4}}>+ Add Exercise</button>:
           <div style={{...card,padding:12,marginTop:4,marginBottom:4}}>
             <div style={{fontSize:10,color:t.textMuted,fontWeight:600,marginBottom:6}}>ADD EXERCISE</div>
@@ -722,7 +649,6 @@ export default function GymTracker({ user, signOut }){
           </div>}
           {hasLog&&<button onClick={()=>setShowFinishConfirm(true)} style={{width:"100%",padding:14,borderRadius:12,border:"none",background:t.finishGrad,color:"#fff",fontWeight:700,fontSize:15,cursor:"pointer",marginTop:4}}>✓ Finish Workout</button>}
 
-          {/* Finish confirmation modal */}
           {showFinishConfirm&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={()=>setShowFinishConfirm(false)}>
             <div style={{background:t.surface,borderRadius:16,border:`1px solid ${t.border}`,padding:20,maxWidth:340,width:"100%"}} onClick={e=>e.stopPropagation()}>
               <div style={{fontSize:16,fontWeight:700,color:t.text,marginBottom:4}}>Finish Workout?</div>
@@ -745,7 +671,7 @@ export default function GymTracker({ user, signOut }){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:3}}>{DOW.map(d=><div key={d} style={{textAlign:"center",fontSize:9,fontWeight:600,color:t.textFaint,padding:"2px 0"}}>{d}</div>)}</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:12}}>
-            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const hc=cardioHistory.some(c=>c.isoDate===d.iso);const hasAny=hw||hc;const isSel=calSelDay===d.iso;const isT=d.iso===toLocalISO(new Date());const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):(hc?CARDIO_COLOR:"transparent");
+            {calDays.map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const hc=cardioHistory.some(c=>c.isoDate===d.iso);const hasAny=hw||hc;const isSel=calSelDay===d.iso;const isT=d.iso===toLocalISO(new Date());const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):(hc?CARDIO_COLOR:"transparent");
               return <button key={d.iso} onClick={()=>setCalSelDay(isSel?null:d.iso)} style={{aspectRatio:"1",borderRadius:8,border:"none",cursor:hasAny?"pointer":"default",background:isSel?`${dc}25`:(isT?t.surfaceAlt:t.surface),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,outline:isSel?`2px solid ${dc}`:"none",padding:0}}>
                 <div style={{fontSize:11,fontWeight:isT?800:500,color:isT?t.text:(hasAny?t.textDim:t.textFaint)}}>{d.day}</div>
                 {hasAny&&<div style={{display:"flex",gap:2}}>{splits.slice(0,2).map((s,j)=><div key={j} style={{width:4,height:4,borderRadius:"50%",background:getSplitColor(s)}}/>)}{hc&&<div style={{width:4,height:4,borderRadius:"50%",background:CARDIO_COLOR}}/>}</div>}
@@ -820,7 +746,6 @@ export default function GymTracker({ user, signOut }){
 
         {/* ==================== PROGRESS ==================== */}
         {tab==="progress"&&<div>
-          {/* Favorites / Muscle group toggle */}
           <div style={{display:"flex",gap:3,marginBottom:8,background:t.surface,borderRadius:8,padding:2}}>
             <button onClick={()=>setProgressView("favorites")} style={{flex:1,padding:"6px 0",borderRadius:6,border:"none",background:progressView==="favorites"?t.surfaceAlt:"transparent",color:progressView==="favorites"?t.yellow:t.textMuted,fontWeight:600,fontSize:11,cursor:"pointer"}}>★ Favorites</button>
             <button onClick={()=>setProgressView("muscle")} style={{flex:1,padding:"6px 0",borderRadius:6,border:"none",background:progressView==="muscle"?t.surfaceAlt:"transparent",color:progressView==="muscle"?t.accent:t.textMuted,fontWeight:600,fontSize:11,cursor:"pointer"}}>By Muscle</button>
@@ -829,7 +754,7 @@ export default function GymTracker({ user, signOut }){
             {MUSCLE_GROUPS.map(m=><button key={m} onClick={()=>setProgressMuscleFilter(m)} style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:600,cursor:"pointer",border:progressMuscleFilter===m?`1px solid ${MC[m]}`:`1px solid ${t.border}`,background:progressMuscleFilter===m?`${MC[m]}20`:"transparent",color:progressMuscleFilter===m?MC[m]:t.textMuted}}>{m}</button>)}
           </div>}
           <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Exercise</div>
-          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:14}}>{(()=>{const list=progressView==="favorites"?[...favoriteExercises].sort():allProgressEx.filter(ex=>{const m=fullExDB[ex]?.muscle;return m===progressMuscleFilter;});return list.map(ex=>{const hasData=allLoggedEx.includes(ex);return <button key={ex} onClick={()=>setChartEx(ex)} style={{...pill(chartEx===ex,t.accent),opacity:hasData?1:0.6}}>{ex}</button>;});})()}</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:14}}>{(()=>{const list=progressView==="favorites"?[...favoriteExercises].sort():allProgressEx.filter(ex=>{const m=fullExDB[ex]?.muscle;return m===progressMuscleFilter;});return list.map(ex=>{const hasData=history.some(h=>h.exercise===ex);return <button key={ex} onClick={()=>setChartEx(ex)} style={{...pill(chartEx===ex,t.accent),opacity:hasData?1:0.6}}>{ex}</button>;});})()}</div>
           {(()=>{const data=getCD(history,chartEx),pr=getPR(history,chartEx);if(!data.length) return <div style={{textAlign:"center",padding:30,color:t.textFaint}}>No data for {chartEx} yet. Start logging to see progress.</div>;
             return <React.Fragment>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{fontSize:15,fontWeight:700,color:t.text}}>{chartEx}</div><div style={{fontSize:10,color:t.yellow,fontWeight:700,background:t.yellowBg,padding:"3px 8px",borderRadius:8}}>PR: {pr}lbs</div></div>
@@ -863,7 +788,6 @@ export default function GymTracker({ user, signOut }){
                   </div>;
                 })()}
               </>}
-              {/* Recent cardio sessions */}
               <div style={{marginTop:10}}>
                 <div style={{fontSize:9,color:t.textMuted,fontWeight:600,textTransform:"uppercase",marginBottom:4}}>Recent Sessions</div>
                 {[...cardioHistory].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0")).slice(0,5).map((c,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderTop:i>0?`1px solid ${t.borderLight}`:"none"}}>
@@ -933,19 +857,17 @@ export default function GymTracker({ user, signOut }){
           <div style={{display:"flex",gap:5,marginBottom:14}}>{friends.map((f,i)=><button key={f.name} onClick={()=>setSelFriend(i)} style={{flex:1,...(selFriend===i?cardWithTop(f.color):card),padding:"10px",cursor:"pointer",textAlign:"center",background:selFriend===i?`${f.color}10`:t.surface}}><div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${f.color},${f.color}99)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",margin:"0 auto 4px"}}>{f.name[0]}</div><div style={{fontSize:11,fontWeight:700,color:selFriend===i?f.color:t.textSec}}>{f.name}</div></button>)}
             <button onClick={()=>setShowAddFriend(true)} style={{flex:1,...card,padding:"10px",cursor:"pointer",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}><div style={{width:30,height:30,borderRadius:"50%",border:`2px dashed ${t.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:t.textFaint}}>+</div><div style={{fontSize:9,fontWeight:600,color:t.textFaint}}>Add</div></button>
           </div>
-          {/* Remove Friend Confirmation */}
           {confirmRemoveFriend&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={()=>setConfirmRemoveFriend(null)}>
             <div style={{background:t.surface,borderRadius:16,border:`1px solid ${t.border}`,padding:20,maxWidth:300,width:"100%",textAlign:"center"}} onClick={e=>e.stopPropagation()}>
               <div style={{fontSize:15,fontWeight:700,color:t.text,marginBottom:6}}>Remove Friend</div>
               <div style={{fontSize:11,color:t.textSec,lineHeight:1.5,marginBottom:16}}>Remove <strong>{confirmRemoveFriend.name}</strong>? You'll stop sharing performance data with each other.</div>
               <div style={{display:"flex",gap:8}}>
                 <button onClick={()=>setConfirmRemoveFriend(null)} style={{flex:1,padding:11,borderRadius:10,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:13,cursor:"pointer"}}>Cancel</button>
-                <button onClick={async()=>{await removeFriend(confirmRemoveFriend.id);setConfirmRemoveFriend(null);}} style={{flex:1,padding:11,borderRadius:10,border:"none",background:t.red||"#ff453a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer"}}>Remove</button>
+                <button onClick={async()=>{await removeFriend(confirmRemoveFriend.id);setConfirmRemoveFriend(null);}} style={{flex:1,padding:11,borderRadius:10,border:"none",background:t.red,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer"}}>Remove</button>
               </div>
             </div>
           </div>}
           {!friendInfoDismissed&&<div style={{...card,padding:10,marginBottom:12,background:`linear-gradient(135deg,${t.surface},${t.surfaceAlt})`,position:"relative"}}><button onClick={()=>setFriendInfoDismissed(true)} style={{position:"absolute",top:6,right:8,background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>×</button><div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:2}}>HOW FRIEND CODES WORK</div><div style={{fontSize:10,color:t.textSec,lineHeight:1.5,paddingRight:16}}>Share your unique code → friends enter it → workouts sync automatically.</div></div>}
-          {/* Add Friend Modal */}
           {showAddFriend&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={()=>{setShowAddFriend(false);setAddFriendCode("");setAddFriendError("");setAddFriendSuccess(false);}}>
             <div style={{background:t.surface,borderRadius:16,border:`1px solid ${t.border}`,padding:20,maxWidth:340,width:"100%"}} onClick={e=>e.stopPropagation()}>
               <div style={{fontSize:16,fontWeight:700,color:t.text,marginBottom:4}}>Add a Friend</div>
@@ -960,7 +882,6 @@ export default function GymTracker({ user, signOut }){
                   const {data:found,error:fErr}=await supabase.from("profiles").select("id,username").eq("friend_code",code).single();
                   if(fErr||!found){setAddFriendError("Friend code not found.");return;}
                   if(friends.some(f=>f.id===found.id)){setAddFriendError("Already friends!");return;}
-                  // Insert both directions so friendship is mutual
                   const {error:i1}=await supabase.from("friendships").upsert({user_id:user.id,friend_id:found.id},{onConflict:"user_id,friend_id",ignoreDuplicates:true});
                   if(i1){setAddFriendError("Failed to add friend: "+i1.message);return;}
                   const {error:i2}=await supabase.from("friendships").upsert({user_id:found.id,friend_id:user.id},{onConflict:"user_id,friend_id",ignoreDuplicates:true});
@@ -976,16 +897,13 @@ export default function GymTracker({ user, signOut }){
             const friendExSet=new Set(f.history.map(h=>h.exercise));
             const myFavsWithData=[...favoriteExercises].filter(ex=>friendExSet.has(ex)||getPR(history,ex)>0).sort();
             const friendOnlyExs=[...friendExSet].filter(ex=>!favoriteExercises.has(ex)).sort();
-            const prExercises=[...myFavsWithData,...friendOnlyExs];
             return <React.Fragment>
-            {/* PR Comparison — Favorites first */}
             <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>PR Comparison — You vs {f.name}</div>
             {myFavsWithData.length>0&&<div style={{fontSize:8,color:t.yellow,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>★ Your Favorites</div>}
             <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:myFavsWithData.length>0&&friendOnlyExs.length>0?4:14}}>{myFavsWithData.map(ex=>{const fPR=getPR(f.history,ex),myPR=getPR(history,ex),ahead=myPR>fPR;return <div key={ex} style={{...card,padding:"8px 12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}><div style={{display:"flex",alignItems:"center",gap:4,flex:1,minWidth:0,overflow:"hidden"}}><span style={{fontSize:12,color:t.yellow}}>★</span><span style={{fontSize:11,fontWeight:500,color:t.textDim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex}</span></div><div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,flexShrink:0}}><span style={{color:f.color,fontWeight:700}}>{fPR||"—"}</span><span style={{color:t.textFaint,fontSize:8}}>vs</span><span style={{color:t.green,fontWeight:700}}>{myPR||"—"}</span>{myPR>0&&fPR>0&&<div style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:5,background:ahead?t.greenBg:t.redBg,color:ahead?t.green:t.red}}>{ahead?"▲":"▼"}{Math.abs(myPR-fPR)}</div>}</div></div>})}</div>
             {friendOnlyExs.length>0&&<><div style={{fontSize:8,color:f.color,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>{f.name}'s Other Exercises</div>
             <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:14}}>{friendOnlyExs.map(ex=>{const fPR=getPR(f.history,ex),myPR=getPR(history,ex),ahead=myPR>fPR;return <div key={ex} style={{...card,padding:"8px 12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}><div style={{fontSize:11,fontWeight:500,color:t.textDim,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex}</div><div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,flexShrink:0}}><span style={{color:f.color,fontWeight:700}}>{fPR}</span><span style={{color:t.textFaint,fontSize:8}}>vs</span><span style={{color:t.green,fontWeight:700}}>{myPR||"—"}</span>{myPR>0&&<div style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:5,background:ahead?t.greenBg:t.redBg,color:ahead?t.green:t.red}}>{ahead?"▲":"▼"}{Math.abs(myPR-fPR)}</div>}</div></div>})}</div></>}
 
-            {/* Compare Progress — Favorites / By Muscle toggle */}
             <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Compare Progress</div>
             <div style={{display:"flex",gap:3,marginBottom:8,background:t.surface,borderRadius:8,padding:2}}>
               <button onClick={()=>setFriendsCompareView("favorites")} style={{flex:1,padding:"6px 0",borderRadius:6,border:"none",background:friendsCompareView==="favorites"?t.surfaceAlt:"transparent",color:friendsCompareView==="favorites"?t.yellow:t.textMuted,fontWeight:600,fontSize:11,cursor:"pointer"}}>★ Favorites</button>
@@ -998,7 +916,7 @@ export default function GymTracker({ user, signOut }){
             {(()=>{const fD=getCD(f.history,chartEx),mD=getCD(history,chartEx);const allD=[...new Set([...fD.map(d=>d.date),...mD.map(d=>d.date)])];const merged=allD.map(d=>({date:d,[f.name]:fD.find(x=>x.date===d)?.weight||null,You:mD.find(x=>x.date===d)?.weight||null}));if(!merged.length) return <div style={{textAlign:"center",padding:20,color:t.textFaint}}>No data for {chartEx}.</div>;
               return <div style={{...card,padding:"12px 4px 4px 0"}}><ResponsiveContainer width="100%" height={180}><LineChart data={merged}><CartesianGrid strokeDasharray="3 3" stroke={t.border}/><XAxis dataKey="date" tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}}/><YAxis tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}} domain={["dataMin-10","dataMax+10"]}/><Tooltip contentStyle={{background:t.surface,border:`1px solid ${t.border}`,borderRadius:8,fontSize:11,color:t.text}}/><Line type="monotone" dataKey={f.name} stroke={f.color} strokeWidth={2} dot={{fill:f.color,r:3}} connectNulls/><Line type="monotone" dataKey="You" stroke={t.green} strokeWidth={2} dot={{fill:t.green,r:3}} connectNulls/></LineChart></ResponsiveContainer><div style={{display:"flex",justifyContent:"center",gap:14,paddingBottom:4}}><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:f.color}}/><span style={{color:t.textSec}}>{f.name}</span></div><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:t.green}}/><span style={{color:t.textSec}}>You</span></div></div></div>
             })()}
-            <button onClick={()=>setConfirmRemoveFriend(f)} style={{display:"block",margin:"20px auto 0",padding:"8px 20px",borderRadius:8,border:`1px solid ${t.red||"#ff453a"}30`,background:"transparent",color:t.red||"#ff453a",fontWeight:600,fontSize:11,cursor:"pointer"}}>Remove Friend</button>
+            <button onClick={()=>setConfirmRemoveFriend(f)} style={{display:"block",margin:"20px auto 0",padding:"8px 20px",borderRadius:8,border:`1px solid ${t.red}30`,background:"transparent",color:t.red,fontWeight:600,fontSize:11,cursor:"pointer"}}>Remove Friend</button>
           </React.Fragment>})()}
         </div>}
       </div>
@@ -1034,24 +952,17 @@ export default function GymTracker({ user, signOut }){
       {/* Settings Panel */}
       {showSettings&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}} onClick={()=>setShowSettings(false)}>
         <div style={{background:t.surface,borderRadius:"16px 16px 0 0",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",padding:"0 0 20px"}} onClick={e=>e.stopPropagation()}>
-          {/* Handle bar */}
           <div style={{display:"flex",justifyContent:"center",padding:"10px 0 6px"}}><div style={{width:36,height:4,borderRadius:2,background:t.border}}/></div>
-
-          {/* Settings header */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 18px 14px"}}>
             <div style={{fontSize:17,fontWeight:700,color:t.text}}>Settings</div>
             <button onClick={()=>setShowSettings(false)} style={{background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:18}}>×</button>
           </div>
-
-          {/* Settings tabs */}
           <div style={{display:"flex",gap:2,margin:"0 18px 16px",background:t.bg,borderRadius:8,padding:2}}>
             {[{id:"profile",l:"Profile"},{id:"friends",l:"Friend Code"},{id:"appearance",l:"Appearance"},{id:"data",l:"Data"}].map(tb=>(
               <button key={tb.id} onClick={()=>setSettingsTab(tb.id)} style={{flex:1,padding:"7px 0",borderRadius:6,border:"none",background:settingsTab===tb.id?t.surfaceAlt:"transparent",color:settingsTab===tb.id?t.text:t.textMuted,fontWeight:600,fontSize:11,cursor:"pointer"}}>{tb.l}</button>
             ))}
           </div>
-
           <div style={{padding:"0 18px"}}>
-            {/* Profile */}
             {settingsTab==="profile"&&<div>
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Your Profile</div>
               <div style={{...card,padding:14}}>
@@ -1068,8 +979,6 @@ export default function GymTracker({ user, signOut }){
                 <div style={{fontSize:10,color:t.textFaint,lineHeight:1.5}}>Your name is shown in the header and will be visible to friends once syncing is enabled.</div>
               </div>
             </div>}
-
-            {/* Friend Code */}
             {settingsTab==="friends"&&<div>
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Your Friend Code</div>
               <div style={{...card,padding:14,textAlign:"center"}}>
@@ -1084,8 +993,6 @@ export default function GymTracker({ user, signOut }){
                 <button onClick={()=>{setShowSettings(false);setTab("friends");setShowAddFriend(true);}} style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${t.accent}40`,background:t.accentBg,color:t.accent,fontWeight:600,fontSize:12,cursor:"pointer"}}>+ Add a Friend</button>
               </div>
             </div>}
-
-            {/* Appearance */}
             {settingsTab==="appearance"&&<div>
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Theme</div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -1105,8 +1012,6 @@ export default function GymTracker({ user, signOut }){
                 ))}
               </div>
             </div>}
-
-            {/* Data */}
             {settingsTab==="data"&&<div>
               <div style={{fontSize:10,color:t.textMuted,fontWeight:600,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Import / Export</div>
               <div style={{...card,padding:14}}>
