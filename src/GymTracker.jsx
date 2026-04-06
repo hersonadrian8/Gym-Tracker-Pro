@@ -68,10 +68,11 @@ const DEFAULT_PROGRAMS = [
 ];
 
 
+const toLocalISO=(d)=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return `${y}-${m}-${day}`;};
 const fc=(s)=>{const a=Math.abs(s);return `${Math.floor(a/60)}:${(a%60).toString().padStart(2,"0")}`;};
 const fcSigned=(s)=>s>=0?fc(s):`+${fc(s)}`;
-const DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-const getMonday=(d)=>{const dt=new Date(d);const day=dt.getDay();const diff=dt.getDate()-day+(day===0?-6:1);dt.setDate(diff);dt.setHours(0,0,0,0);return dt;};
+const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const getSunday=(d)=>{const dt=new Date(d);dt.setDate(dt.getDate()-dt.getDay());dt.setHours(0,0,0,0);return dt;};
 
 const FRIEND_COLORS=["#3b82f6","#f59e0b","#ef4444","#10b981","#8b5cf6","#f472b6","#06b6d4","#84cc16"];
 
@@ -229,7 +230,7 @@ export default function GymTracker({ user, signOut }){
   const addWorkoutExercise=(ex)=>{setUnplannedExercises(prev=>[...prev,{name:ex.name,muscle:ex.muscle,sets:3,rest:ex.rest||90}]);setShowAddWorkoutEx(false);setWorkoutExSearch("");};
   const removeWorkoutExercise=(idx)=>{setUnplannedExercises(prev=>prev.filter((_,i)=>i!==idx));};
   const cancelWorkout=()=>{setLogPhase("home");setWorkoutLog({});setSetCounts({});setManuallyEdited({});setConfirmedSets({});setSelSplitIdx(null);setWorkoutStart(null);setUnplannedExercises([]);stopR();};
-  const finishWorkout=()=>{const now=new Date();const d=now.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=now.toISOString().split("T")[0];const entries=[];
+  const finishWorkout=()=>{const now=new Date();const d=now.toLocaleDateString("en-US",{month:"short",day:"numeric"});const iso=toLocalISO(now);const entries=[];
     const exList=isUnplanned?unplannedExercises:exercises;const pName=isUnplanned?"Freestyle":prog.name;const sName=isUnplanned?"Unplanned":split.name;
     exList.forEach(ex=>{const c=getSC(ex.name);let maxW=0,tR=0,valid=0;const setDetails=[];
       for(let i=0;i<c;i++){const tp=getType(ex.name,i);if(tp==="D"){const drops=[];for(let dd=0;dd<3;dd++){const s=getS(ex.name,i,dd);const w=parseFloat(s.weight),r=parseInt(s.reps);if(w>0){drops.push({weight:w,reps:r||0});if(w>maxW)maxW=w;if(r>0){tR+=r;valid++;}}}if(drops.length>0)setDetails.push({type:"D",drops});}else{const wVal=getEffectiveWeight(ex.name,i);const s=getS(ex.name,i);const w=parseFloat(wVal),r=parseInt(s.reps);if(w>0&&r>0){if(w>maxW)maxW=w;tR+=r;valid++;setDetails.push({type:tp,weight:w,reps:r});}}}
@@ -264,13 +265,13 @@ export default function GymTracker({ user, signOut }){
   const primaryProg=programs[primaryProgIdx];
   const getNextSplit=()=>{if(!primaryProg||!primaryProg.splits.length)return null;const ph=history.filter(h=>h.program===primaryProg.name);if(!ph.length)return{splitIdx:0,splitName:primaryProg.splits[0].name};const maxDate=ph.reduce((m,h)=>(h.isoDate||"0")>m?(h.isoDate||"0"):m,"0");const lastDayEntries=ph.filter(h=>h.isoDate===maxDate);const lastSplit=lastDayEntries[lastDayEntries.length-1].split;const li=primaryProg.splits.findIndex(s=>s.name===lastSplit);return{splitIdx:(li+1)%primaryProg.splits.length,splitName:primaryProg.splits[(li+1)%primaryProg.splits.length].name};};
   const nextSplit=getNextSplit();
-  const getWeekDots=()=>{const mon=getMonday(new Date());const dots=[];for(let i=0;i<7;i++){const dt=new Date(mon);dt.setDate(mon.getDate()+i);const iso=dt.toISOString().split("T")[0];const de=history.filter(h=>h.isoDate===iso);dots.push({day:DOW[i],iso,worked:de.length>0,program:de.length>0?de[0].program:null,isToday:iso===new Date().toISOString().split("T")[0],entries:de});}return dots;};
+  const getWeekDots=()=>{const sun=getSunday(new Date());const todayIso=toLocalISO(new Date());const dots=[];for(let i=0;i<7;i++){const dt=new Date(sun);dt.setDate(sun.getDate()+i);const iso=toLocalISO(dt);const de=history.filter(h=>h.isoDate===iso);dots.push({day:DOW[i],iso,worked:de.length>0,program:de.length>0?de[0].program:null,isToday:iso===todayIso,entries:de});}return dots;};
   const weekDots=getWeekDots();
-  const getRecentPRs=()=>{const tw=new Date();tw.setDate(tw.getDate()-14);const twi=tw.toISOString().split("T")[0];const prs=[];[...new Set(history.map(h=>h.exercise))].forEach(ex=>{const all=history.filter(h=>h.exercise===ex);const recent=all.filter(h=>(h.isoDate||"9")>=twi);const older=all.filter(h=>(h.isoDate||"0")<twi);if(!recent.length)return;const rm=Math.max(...recent.map(h=>h.weight));const om=older.length?Math.max(...older.map(h=>h.weight)):0;if(rm>om&&om>0)prs.push({exercise:ex,weight:rm,prev:om,gain:rm-om,date:recent.find(h=>h.weight===rm)?.date});});return prs;};
+  const getRecentPRs=()=>{const tw=new Date();tw.setDate(tw.getDate()-14);const twi=toLocalISO(tw);const prs=[];[...new Set(history.map(h=>h.exercise))].forEach(ex=>{const all=history.filter(h=>h.exercise===ex);const recent=all.filter(h=>(h.isoDate||"9")>=twi);const older=all.filter(h=>(h.isoDate||"0")<twi);if(!recent.length)return;const rm=Math.max(...recent.map(h=>h.weight));const om=older.length?Math.max(...older.map(h=>h.weight)):0;if(rm>om&&om>0)prs.push({exercise:ex,weight:rm,prev:om,gain:rm-om,date:recent.find(h=>h.weight===rm)?.date});});return prs;};
   const recentPRs=getRecentPRs();
   const getLastWorkout=()=>{if(!history.length)return null;const sorted=[...history].sort((a,b)=>(b.isoDate||"0").localeCompare(a.isoDate||"0"));const ld=sorted[0].isoDate;const lday=sorted.filter(h=>h.isoDate===ld);return{date:lday[0].date,split:lday[0].split,program:lday[0].program,exercises:lday,topLift:[...lday].sort((a,b)=>b.weight-a.weight)[0]};};
   const lastWorkout=getLastWorkout();
-  const getCalDays=()=>{const y=calMonth.getFullYear(),m=calMonth.getMonth();const ld=new Date(y,m+1,0);let sd=new Date(y,m,1).getDay();sd=sd===0?6:sd-1;const days=[];for(let i=0;i<sd;i++)days.push(null);for(let d=1;d<=ld.getDate();d++){const dt=new Date(y,m,d);const iso=dt.toISOString().split("T")[0];days.push({day:d,iso,entries:history.filter(h=>h.isoDate===iso)});}return days;};
+  const getCalDays=()=>{const y=calMonth.getFullYear(),m=calMonth.getMonth();const ld=new Date(y,m+1,0);const sd=new Date(y,m,1).getDay();const days=[];for(let i=0;i<sd;i++)days.push(null);for(let d=1;d<=ld.getDate();d++){const dt=new Date(y,m,d);const iso=toLocalISO(dt);days.push({day:d,iso,entries:history.filter(h=>h.isoDate===iso)});}return days;};
 
   const SPLIT_COLORS=["#818cf8","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f472b6","#84cc16"];
   const getSplitColor=(splitName)=>{if(!primaryProg)return SPLIT_COLORS[0];const idx=primaryProg.splits.findIndex(s=>s.name===splitName);return idx>=0?SPLIT_COLORS[idx%SPLIT_COLORS.length]:SPLIT_COLORS[0];};
@@ -575,7 +576,7 @@ export default function GymTracker({ user, signOut }){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:3}}>{DOW.map(d=><div key={d} style={{textAlign:"center",fontSize:9,fontWeight:600,color:t.textFaint,padding:"2px 0"}}>{d}</div>)}</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:12}}>
-            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const isSel=calSelDay===d.iso;const isT=d.iso===new Date().toISOString().split("T")[0];const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):"transparent";
+            {getCalDays().map((d,i)=>{if(!d)return <div key={`e-${i}`} style={{aspectRatio:"1"}}/>;const hw=d.entries.length>0;const isSel=calSelDay===d.iso;const isT=d.iso===toLocalISO(new Date());const splits=[...new Set(d.entries.map(e=>e.split))];const dc=hw?getSplitColor(splits[0]):"transparent";
               return <button key={d.iso} onClick={()=>setCalSelDay(isSel?null:d.iso)} style={{aspectRatio:"1",borderRadius:8,border:"none",cursor:hw?"pointer":"default",background:isSel?`${dc}25`:(isT?t.surfaceAlt:t.surface),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,outline:isSel?`2px solid ${dc}`:"none",padding:0}}>
                 <div style={{fontSize:11,fontWeight:isT?800:500,color:isT?t.text:(hw?t.textDim:t.textFaint)}}>{d.day}</div>
                 {hw&&<div style={{display:"flex",gap:2}}>{splits.slice(0,2).map((s,j)=><div key={j} style={{width:4,height:4,borderRadius:"50%",background:getSplitColor(s)}}/>)}</div>}
@@ -614,7 +615,7 @@ export default function GymTracker({ user, signOut }){
           <div style={{display:"flex",gap:8,justifyContent:"center",padding:"4px 0",marginBottom:14,flexWrap:"wrap"}}>{primaryProg?primaryProg.splits.map((s,i)=><div key={s.name} style={{display:"flex",alignItems:"center",gap:3,fontSize:9,color:t.textMuted}}><div style={{width:6,height:6,borderRadius:"50%",background:SPLIT_COLORS[i%SPLIT_COLORS.length]}}/>{s.name}</div>):<div style={{fontSize:9,color:t.textFaint}}>No primary program set</div>}</div>
 
           {/* Sets per muscle group — last 7 days */}
-          {(()=>{const now=new Date();const sevenAgo=new Date(now);sevenAgo.setDate(now.getDate()-6);sevenAgo.setHours(0,0,0,0);const sevenIso=sevenAgo.toISOString().split("T")[0];
+          {(()=>{const now=new Date();const sevenAgo=new Date(now);sevenAgo.setDate(now.getDate()-6);sevenAgo.setHours(0,0,0,0);const sevenIso=toLocalISO(sevenAgo);
             const recent=history.filter(h=>(h.isoDate||"0")>=sevenIso);
             const muscleMap={};recent.forEach(h=>{const m=fullExDB[h.exercise]?.muscle||"Other";muscleMap[m]=(muscleMap[m]||0)+(h.sets||0);});
             const entries=MUSCLE_GROUPS.map(m=>({muscle:m,sets:muscleMap[m]||0})).filter(e=>e.sets>0);
