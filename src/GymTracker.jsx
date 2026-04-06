@@ -138,6 +138,7 @@ export default function GymTracker({ user, signOut }){
   const [addFriendError,setAddFriendError]=useState("");
   const [addFriendSuccess,setAddFriendSuccess]=useState(false);
   const [friendsLoading,setFriendsLoading]=useState(false);
+  const [confirmRemoveFriend,setConfirmRemoveFriend]=useState(null);
   const [importPreview,setImportPreview]=useState(null);
   const [importSelected,setImportSelected]=useState(new Set());
   const [importError,setImportError]=useState("");
@@ -210,6 +211,16 @@ export default function GymTracker({ user, signOut }){
     }
     setFriends(friendsList);
   }catch(e){/* offline */}setFriendsLoading(false);},[user]);
+  const genFriendCode=()=>"GT-"+Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b=>b.toString(36).toUpperCase()).join("").slice(0,6).padEnd(6,"X");
+  const removeFriend=async(friendId)=>{if(!user)return;try{
+    await supabase.from("friendships").delete().match({user_id:user.id,friend_id:friendId});
+    await supabase.from("friendships").delete().match({user_id:friendId,friend_id:user.id});
+    // Regenerate friend code so removed person can't re-add
+    const newCode=genFriendCode();
+    const {error}=await supabase.from("profiles").update({friend_code:newCode}).eq("id",user.id);
+    if(!error)setFriendCode(newCode);
+    setSelFriend(0);await loadFriends();
+  }catch(e){console.warn("[Friends] Remove failed:",e.message);}};
   useEffect(()=>{loadFriends();},[loadFriends]);
 
   // Sync performance stats on mount
@@ -922,6 +933,17 @@ export default function GymTracker({ user, signOut }){
           <div style={{display:"flex",gap:5,marginBottom:14}}>{friends.map((f,i)=><button key={f.name} onClick={()=>setSelFriend(i)} style={{flex:1,...(selFriend===i?cardWithTop(f.color):card),padding:"10px",cursor:"pointer",textAlign:"center",background:selFriend===i?`${f.color}10`:t.surface}}><div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${f.color},${f.color}99)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",margin:"0 auto 4px"}}>{f.name[0]}</div><div style={{fontSize:11,fontWeight:700,color:selFriend===i?f.color:t.textSec}}>{f.name}</div></button>)}
             <button onClick={()=>setShowAddFriend(true)} style={{flex:1,...card,padding:"10px",cursor:"pointer",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}><div style={{width:30,height:30,borderRadius:"50%",border:`2px dashed ${t.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:t.textFaint}}>+</div><div style={{fontSize:9,fontWeight:600,color:t.textFaint}}>Add</div></button>
           </div>
+          {/* Remove Friend Confirmation */}
+          {confirmRemoveFriend&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={()=>setConfirmRemoveFriend(null)}>
+            <div style={{background:t.surface,borderRadius:16,border:`1px solid ${t.border}`,padding:20,maxWidth:300,width:"100%",textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+              <div style={{fontSize:15,fontWeight:700,color:t.text,marginBottom:6}}>Remove Friend</div>
+              <div style={{fontSize:11,color:t.textSec,lineHeight:1.5,marginBottom:16}}>Remove <strong>{confirmRemoveFriend.name}</strong>? You'll stop sharing performance data with each other.</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setConfirmRemoveFriend(null)} style={{flex:1,padding:11,borderRadius:10,border:`1px solid ${t.border}`,background:"transparent",color:t.textMuted,fontWeight:600,fontSize:13,cursor:"pointer"}}>Cancel</button>
+                <button onClick={async()=>{await removeFriend(confirmRemoveFriend.id);setConfirmRemoveFriend(null);}} style={{flex:1,padding:11,borderRadius:10,border:"none",background:t.red||"#ff453a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer"}}>Remove</button>
+              </div>
+            </div>
+          </div>}
           {!friendInfoDismissed&&<div style={{...card,padding:10,marginBottom:12,background:`linear-gradient(135deg,${t.surface},${t.surfaceAlt})`,position:"relative"}}><button onClick={()=>setFriendInfoDismissed(true)} style={{position:"absolute",top:6,right:8,background:"none",border:"none",color:t.textFaint,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>×</button><div style={{fontSize:9,color:t.textMuted,fontWeight:600,marginBottom:2}}>HOW FRIEND CODES WORK</div><div style={{fontSize:10,color:t.textSec,lineHeight:1.5,paddingRight:16}}>Share your unique code → friends enter it → workouts sync automatically.</div></div>}
           {/* Add Friend Modal */}
           {showAddFriend&&<div style={{position:"fixed",inset:0,background:t.overlay,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}} onClick={()=>{setShowAddFriend(false);setAddFriendCode("");setAddFriendError("");setAddFriendSuccess(false);}}>
@@ -976,6 +998,7 @@ export default function GymTracker({ user, signOut }){
             {(()=>{const fD=getCD(f.history,chartEx),mD=getCD(history,chartEx);const allD=[...new Set([...fD.map(d=>d.date),...mD.map(d=>d.date)])];const merged=allD.map(d=>({date:d,[f.name]:fD.find(x=>x.date===d)?.weight||null,You:mD.find(x=>x.date===d)?.weight||null}));if(!merged.length) return <div style={{textAlign:"center",padding:20,color:t.textFaint}}>No data for {chartEx}.</div>;
               return <div style={{...card,padding:"12px 4px 4px 0"}}><ResponsiveContainer width="100%" height={180}><LineChart data={merged}><CartesianGrid strokeDasharray="3 3" stroke={t.border}/><XAxis dataKey="date" tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}}/><YAxis tick={{fill:t.textMuted,fontSize:9}} axisLine={{stroke:t.border}} domain={["dataMin-10","dataMax+10"]}/><Tooltip contentStyle={{background:t.surface,border:`1px solid ${t.border}`,borderRadius:8,fontSize:11,color:t.text}}/><Line type="monotone" dataKey={f.name} stroke={f.color} strokeWidth={2} dot={{fill:f.color,r:3}} connectNulls/><Line type="monotone" dataKey="You" stroke={t.green} strokeWidth={2} dot={{fill:t.green,r:3}} connectNulls/></LineChart></ResponsiveContainer><div style={{display:"flex",justifyContent:"center",gap:14,paddingBottom:4}}><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:f.color}}/><span style={{color:t.textSec}}>{f.name}</span></div><div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}><div style={{width:10,height:3,borderRadius:2,background:t.green}}/><span style={{color:t.textSec}}>You</span></div></div></div>
             })()}
+            <button onClick={()=>setConfirmRemoveFriend(f)} style={{display:"block",margin:"20px auto 0",padding:"8px 20px",borderRadius:8,border:`1px solid ${t.red||"#ff453a"}30`,background:"transparent",color:t.red||"#ff453a",fontWeight:600,fontSize:11,cursor:"pointer"}}>Remove Friend</button>
           </React.Fragment>})()}
         </div>}
       </div>
