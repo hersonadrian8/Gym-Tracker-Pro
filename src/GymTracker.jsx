@@ -170,10 +170,12 @@ export default function GymTracker({ user, signOut }){
     if(sErr||!ships||!ships.length){setFriends([]);setFriendsLoading(false);return;}
     const friendIds=ships.map(s=>s.friend_id);
     const {data:profiles,error:pErr}=await supabase.from("profiles").select("id,username,custom_exercises").in("id",friendIds);
+    console.log("[Friends] profiles query:",pErr?pErr.message:"OK",profiles?.length,"friends",profiles?.map(p=>({id:p.id,name:p.username,customEx:Object.keys(p.custom_exercises||{})})));
     if(pErr){setFriendsLoading(false);return;}
     const friendsList=await Promise.all((profiles||[]).map(async(p,i)=>{
       const hist=await fetchFriendStats(p.id);
       const friendCustomEx=p.custom_exercises&&typeof p.custom_exercises==="object"?p.custom_exercises:{};
+      console.log("[Friends]",p.username,"custom exercises:",Object.keys(friendCustomEx),"history entries:",hist.length);
       return{id:p.id,name:p.username||"Friend",history:hist,customExercises:friendCustomEx,color:FRIEND_COLORS[i%FRIEND_COLORS.length]};
     }));
     setFriends(friendsList);
@@ -183,7 +185,7 @@ export default function GymTracker({ user, signOut }){
   // Sync performance stats on mount
   useEffect(()=>{console.log("[Sync trigger] user:",!!user,"history:",history.length);if(user&&history.length)syncPerformanceStats(user.id,history,{...EXERCISE_DB,...customExercises}).then(()=>console.log("[Sync] done")).catch(e=>console.error("[Sync] error:",e));},[user,history.length]);
   // Sync custom exercises to Supabase
-  useEffect(()=>{if(user&&Object.keys(customExercises).length>0)syncCustomExercises(user.id,customExercises);},[user,customExercises]);
+  useEffect(()=>{console.log("[CustomEx] sync trigger, count:",Object.keys(customExercises).length);if(user&&Object.keys(customExercises).length>0)syncCustomExercises(user.id,customExercises);},[user,customExercises]);
 
   // Sync all app data to Supabase (debounced)
   const syncTimerRef=useRef(null);
