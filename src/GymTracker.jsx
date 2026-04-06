@@ -152,13 +152,13 @@ export default function GymTracker({ user, signOut }){
     // Load full app data from cloud
     const cloud=await fetchAppData(user.id);
     if(cloud){
-      if(cloud.programs&&cloud.programs.length)setPrograms(prev=>{const local=prev;const remote=cloud.programs;return remote.length>=local.length||(JSON.stringify(local)===JSON.stringify([...DEFAULT_PROGRAMS]))?remote:local;});
+      if(cloud.programs)setPrograms(cloud.programs);
       if(cloud.history&&cloud.history.length)setHistory(prev=>{const merged=[...prev];cloud.history.forEach(ch=>{if(!merged.find(h=>h.exercise===ch.exercise&&h.isoDate===ch.isoDate&&h.split===ch.split))merged.push(ch);});return merged;});
-      if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(prev=>prev===0?cloud.primaryProgIdx:prev);
-      if(cloud.appearance)setAppearance(prev=>prev==="auto"?cloud.appearance:prev);
-      if(cloud.customRestTimes)setCustomRestTimes(prev=>({...cloud.customRestTimes,...prev}));
-      if(cloud.favoriteExercises&&cloud.favoriteExercises.length)setFavoriteExercises(prev=>{const merged=new Set([...prev,...cloud.favoriteExercises]);return merged;});
-      if(cloud.hiddenExercises&&cloud.hiddenExercises.length)setHiddenExercises(prev=>{const merged=new Set([...prev,...cloud.hiddenExercises]);return merged;});
+      if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(cloud.primaryProgIdx);
+      if(cloud.appearance)setAppearance(cloud.appearance);
+      if(cloud.customRestTimes)setCustomRestTimes(cloud.customRestTimes);
+      if(cloud.favoriteExercises)setFavoriteExercises(new Set(cloud.favoriteExercises));
+      if(cloud.hiddenExercises)setHiddenExercises(new Set(cloud.hiddenExercises));
       console.log("[AppSync] Loaded from cloud");
     }
     setCloudLoaded(true);
