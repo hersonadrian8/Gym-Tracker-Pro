@@ -163,25 +163,24 @@ export default function GymTracker({ user, signOut }){
   useEffect(()=>{if(!user)return;(async()=>{try{
     const {data,error}=await supabase.from("profiles").select("username,friend_code,custom_exercises").eq("id",user.id).single();
     if(!error&&data){setFriendCode(data.friend_code||"");if(data.username){setProfileName(data.username);setProfileDraft(data.username);}if(data.custom_exercises&&typeof data.custom_exercises==="object"){setCustomExercises(prev=>({...data.custom_exercises,...prev}));}}
-    // Load full app data from cloud — only applies on fresh device (no local data)
+    // Load full app data from cloud
     const cloud=await fetchAppData(user.id);
     if(cloud){
       const hasLocal=!!localStorage.getItem("gt_history")||!!localStorage.getItem("gt_programs");
       if(!hasLocal){
         // Fresh device: use cloud data entirely
         if(cloud.programs)setPrograms(cloud.programs);
-        if(cloud.history)setHistory(cloud.history);
         if(cloud.primaryProgIdx!=null)setPrimaryProgIdx(cloud.primaryProgIdx);
         if(cloud.appearance)setAppearance(cloud.appearance);
         if(cloud.customRestTimes)setCustomRestTimes(cloud.customRestTimes);
         if(cloud.favoriteExercises)setFavoriteExercises(new Set(cloud.favoriteExercises));
         if(cloud.hiddenExercises)setHiddenExercises(new Set(cloud.hiddenExercises));
-        if(cloud.cardioHistory)setCardioHistory(cloud.cardioHistory);
         if(cloud.customCardio)setCustomCardio(cloud.customCardio);
-        console.log("[AppSync] Fresh device — loaded all from cloud");
-      } else {
-        console.log("[AppSync] Local data exists — cloud skipped (localStorage is source of truth)");
+        console.log("[AppSync] Fresh device — loaded settings from cloud");
       }
+      // Always merge history & cardio from cloud (adds entries that don't exist locally)
+      if(cloud.history&&cloud.history.length)setHistory(prev=>{const merged=[...prev];let added=0;cloud.history.forEach(ch=>{if(!merged.find(h=>h.exercise===ch.exercise&&h.isoDate===ch.isoDate&&h.split===ch.split)){merged.push(ch);added++;}});console.log("[AppSync] Merged history: +"+added+" from cloud");return added>0?merged:prev;});
+      if(cloud.cardioHistory&&cloud.cardioHistory.length)setCardioHistory(prev=>{const merged=[...prev];let added=0;cloud.cardioHistory.forEach(ch=>{if(!merged.find(c=>c.type===ch.type&&c.isoDate===ch.isoDate&&c.distance===ch.distance)){merged.push(ch);added++;}});return added>0?merged:prev;});
     }
     setCloudLoaded(true);
   }catch(e){console.warn("[AppSync] Load failed:",e.message);setCloudLoaded(true);}})();},[user]);
